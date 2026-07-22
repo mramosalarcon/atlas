@@ -19,36 +19,32 @@ from __future__ import annotations
 
 
 class AtlasError(Exception):
-    """
-    Base exception for every domain-specific error in ATLAS.
-    """
+    """Base exception for every domain-specific error in ATLAS."""
 
 
 class ValidationError(AtlasError):
-    """
-    Raised when domain validation fails.
-    """
+    """Raised when domain validation fails."""
 
 
 class InvalidLotteryNumberError(ValidationError):
-    """
-    Raised when a lottery number is outside the allowed range.
-    """
+    """Raised when a lottery number is outside the allowed range."""
 
 
 class DuplicateNumberError(ValidationError):
-    """
-    Raised when duplicate numbers are found.
-    """
+    """Raised when duplicate numbers are found."""
 
 
 class InvalidTicketError(ValidationError):
-    """
-    Raised when a ticket violates the game rules.
-    """
+    """Raised when a ticket violates the game rules."""
 
 
 class InvalidDrawError(ValidationError):
-    """
-    Raised when a draw is invalid.
-    """
+    """Raised when a draw is invalid."""
+
+
+class InvalidSystemError(ValidationError):
+    """Raised when a ticket system violates configured size or ticket rules."""
+
+
+class ImportValidationError(ValidationError):
+    """Raised when historical import data fails validation."""
