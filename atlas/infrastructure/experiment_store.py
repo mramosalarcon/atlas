@@ -27,6 +27,7 @@ class ExperimentRecord:
     decision: str
     min_absolute_delta: int
     config_path: str
+    policy_evidence: dict[str, Any] | None = None
 
 
 class ExperimentStore:
@@ -57,14 +58,22 @@ class ExperimentStore:
                     outcome TEXT NOT NULL,
                     decision TEXT NOT NULL,
                     min_absolute_delta INTEGER NOT NULL,
-                    config_path TEXT NOT NULL
+                    config_path TEXT NOT NULL,
+                    policy_evidence TEXT
                 )
                 """
             )
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(experiments)").fetchall()
+            }
+            if "policy_evidence" not in columns:
+                conn.execute("ALTER TABLE experiments ADD COLUMN policy_evidence TEXT")
             conn.commit()
 
     def append(self, payload: dict[str, Any]) -> ExperimentRecord:
         timestamp = datetime.now(timezone.utc).isoformat()
+        evidence = payload.get("policy_evidence")
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -73,8 +82,9 @@ class ExperimentStore:
                     baseline_tickets, candidate_tickets,
                     validation_start, validation_end,
                     baseline_metric, candidate_metric, delta,
-                    outcome, decision, min_absolute_delta, config_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    outcome, decision, min_absolute_delta, config_path,
+                    policy_evidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     timestamp,
@@ -91,6 +101,7 @@ class ExperimentStore:
                     payload["decision"],
                     payload["min_absolute_delta"],
                     payload["config_path"],
+                    json.dumps(evidence) if evidence is not None else None,
                 ),
             )
             conn.commit()
@@ -112,6 +123,7 @@ class ExperimentStore:
             decision=payload["decision"],
             min_absolute_delta=payload["min_absolute_delta"],
             config_path=payload["config_path"],
+            policy_evidence=evidence,
         )
 
     def list_experiments(self) -> list[ExperimentRecord]:
@@ -121,23 +133,28 @@ class ExperimentStore:
                 "SELECT * FROM experiments ORDER BY id ASC"
             ).fetchall()
 
-        return [
-            ExperimentRecord(
-                id=int(row["id"]),
-                timestamp=row["timestamp"],
-                baseline_name=row["baseline_name"],
-                candidate_name=row["candidate_name"],
-                baseline_tickets=json.loads(row["baseline_tickets"]),
-                candidate_tickets=json.loads(row["candidate_tickets"]),
-                validation_start=int(row["validation_start"]),
-                validation_end=int(row["validation_end"]),
-                baseline_metric=int(row["baseline_metric"]),
-                candidate_metric=int(row["candidate_metric"]),
-                delta=int(row["delta"]),
-                outcome=row["outcome"],
-                decision=row["decision"],
-                min_absolute_delta=int(row["min_absolute_delta"]),
-                config_path=row["config_path"],
+        records: list[ExperimentRecord] = []
+        for row in rows:
+            evidence_raw = row["policy_evidence"] if "policy_evidence" in row.keys() else None
+            evidence = json.loads(evidence_raw) if evidence_raw else None
+            records.append(
+                ExperimentRecord(
+                    id=int(row["id"]),
+                    timestamp=row["timestamp"],
+                    baseline_name=row["baseline_name"],
+                    candidate_name=row["candidate_name"],
+                    baseline_tickets=json.loads(row["baseline_tickets"]),
+                    candidate_tickets=json.loads(row["candidate_tickets"]),
+                    validation_start=int(row["validation_start"]),
+                    validation_end=int(row["validation_end"]),
+                    baseline_metric=int(row["baseline_metric"]),
+                    candidate_metric=int(row["candidate_metric"]),
+                    delta=int(row["delta"]),
+                    outcome=row["outcome"],
+                    decision=row["decision"],
+                    min_absolute_delta=int(row["min_absolute_delta"]),
+                    config_path=row["config_path"],
+                    policy_evidence=evidence,
+                )
             )
-            for row in rows
-        ]
+        return records

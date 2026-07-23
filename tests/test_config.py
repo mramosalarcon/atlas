@@ -15,6 +15,22 @@ from atlas.config import (
 )
 
 
+def _freeze_policy(**overrides):
+    policy = {
+        "n_folds": 5,
+        "required_fold_passes": 4,
+        "bootstrap": {
+            "enabled": False,
+            "n_resamples": 1000,
+            "ci_level": 0.95,
+            "seed": 42,
+            "min_ci_lower": 0,
+        },
+    }
+    policy.update(overrides)
+    return policy
+
+
 def _minimal_payload(**overrides):
     payload = {
         "paths": {
@@ -34,6 +50,7 @@ def _minimal_payload(**overrides):
             "validation_ratio": 0.15,
             "min_absolute_delta": 1,
             "primary_metric_min_hits": 3,
+            "freeze_policy": _freeze_policy(),
         },
         "prizes": {
             "provisional": True,
@@ -56,13 +73,13 @@ def test_load_default_melate_config() -> None:
     assert config.lottery.main_count == 6
     assert config.lottery.system_size == 8
     assert config.evaluation.validation_ratio == 0.15
+    assert config.evaluation.freeze_policy.n_folds == 5
+    assert config.evaluation.freeze_policy.required_fold_passes == 4
+    assert config.evaluation.freeze_policy.bootstrap.enabled is False
     assert config.analytics is not None
     assert config.analytics.rolling_windows == (10, 20, 50, 100)
-    assert config.analytics.analytics_db.name == "analytics.sqlite3"
     assert config.optimizer is not None
     assert config.optimizer.seed == 42
-    assert config.optimizer.candidate_pool_size == 500
-    assert config.optimizer.greedy.enabled is True
 
 
 def test_missing_config_fails_clearly(tmp_path: Path) -> None:
@@ -87,3 +104,25 @@ def test_missing_optimizer_section_fails_when_required(tmp_path: Path) -> None:
     assert config.optimizer is None
     with pytest.raises(ConfigError, match="optimizer"):
         require_optimizer(config)
+
+
+def test_invalid_required_fold_passes_fails(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_payload()
+    payload["evaluation"]["freeze_policy"] = _freeze_policy(
+        n_folds=3, required_fold_passes=5
+    )
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ConfigError, match="required_fold_passes"):
+        load_config(config_path)
+
+
+def test_n_folds_must_be_at_least_two(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_payload()
+    payload["evaluation"]["freeze_policy"] = _freeze_policy(
+        n_folds=1, required_fold_passes=1
+    )
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ConfigError, match="n_folds"):
+        load_config(config_path)

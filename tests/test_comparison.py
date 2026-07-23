@@ -6,7 +6,9 @@ from pathlib import Path
 
 from atlas.config.settings import (
     AppConfig,
+    BootstrapSettings,
     EvaluationSettings,
+    FreezePolicySettings,
     LotterySettings,
     PathSettings,
     PrizeSettings,
@@ -24,7 +26,31 @@ def _rules() -> LotteryRules:
     return LotteryRules(1, 56, 6, True, 8)
 
 
-def _config(tmp_path: Path, min_absolute_delta: int = 1) -> AppConfig:
+def _freeze(
+    *,
+    n_folds: int = 2,
+    required_fold_passes: int = 1,
+    bootstrap_enabled: bool = False,
+    min_ci_lower: float = 0.0,
+) -> FreezePolicySettings:
+    return FreezePolicySettings(
+        n_folds=n_folds,
+        required_fold_passes=required_fold_passes,
+        bootstrap=BootstrapSettings(
+            enabled=bootstrap_enabled,
+            n_resamples=200,
+            ci_level=0.95,
+            seed=1,
+            min_ci_lower=min_ci_lower,
+        ),
+    )
+
+
+def _config(
+    tmp_path: Path,
+    min_absolute_delta: int = 1,
+    freeze: FreezePolicySettings | None = None,
+) -> AppConfig:
     return AppConfig(
         paths=PathSettings(
             csv=tmp_path / "x.csv",
@@ -32,7 +58,12 @@ def _config(tmp_path: Path, min_absolute_delta: int = 1) -> AppConfig:
             experiments_db=tmp_path / "experiments.sqlite3",
         ),
         lottery=LotterySettings("Melate", 1, 56, 6, True, 8),
-        evaluation=EvaluationSettings(0.5, min_absolute_delta, 3),
+        evaluation=EvaluationSettings(
+            0.5,
+            min_absolute_delta,
+            3,
+            freeze or _freeze(),
+        ),
         prizes=PrizeSettings(True, 20.0, 30.0, 200.0, 5000.0, 50000.0, 1_000_000.0),
         source_path=tmp_path / "config.yaml",
     )
@@ -49,7 +80,6 @@ def _system(name: str, tickets: list[list[int]]) -> TicketSystem:
 
 def _draws() -> list[Draw]:
     rules = _rules()
-    # Contests 1-2 train, 3-4 validation when ratio=0.5
     return [
         Draw.create(1, [50, 51, 52, 53, 54, 55], rules, additional=56),
         Draw.create(2, [50, 51, 52, 53, 54, 55], rules, additional=56),
@@ -87,8 +117,9 @@ def test_chronological_split() -> None:
     assert [d.contest for d in validation] == [3, 4]
 
 
-def test_accept_on_improvement(tmp_path: Path) -> None:
-    config = _config(tmp_path, min_absolute_delta=1)
+def test_accept_on_walkforward_pass(tmp_path: Path) -> None:
+    # Candidate wins only fold 2; required_fold_passes=1 => accept.
+    config = _config(tmp_path, freeze=_freeze(required_fold_passes=1))
     store = ExperimentStore(config.paths.experiments_db)
     result = compare_systems(
         _system("baseline", BASELINE_TICKETS),
@@ -97,14 +128,33 @@ def test_accept_on_improvement(tmp_path: Path) -> None:
         config,
         store,
     )
-    assert result.outcome == "improved"
+    assert result.fold_passes >= 1
     assert result.decision == "accepted"
-    assert result.delta >= 1
-    assert store.list_experiments()[0].decision == "accepted"
+    assert result.outcome == "improved"
+    evidence = store.list_experiments()[0].policy_evidence
+    assert evidence is not None
+    assert evidence["decision"] == "accepted"
+    assert len(evidence["folds"]) == 2
 
 
-def test_reject_still_logged(tmp_path: Path) -> None:
-    config = _config(tmp_path, min_absolute_delta=1)
+def test_reject_on_insufficient_fold_passes(tmp_path: Path) -> None:
+    # Same systems but require both folds to pass => reject.
+    config = _config(tmp_path, freeze=_freeze(required_fold_passes=2))
+    store = ExperimentStore(config.paths.experiments_db)
+    result = compare_systems(
+        _system("baseline", BASELINE_TICKETS),
+        _system("candidate", CANDIDATE_TICKETS),
+        _draws(),
+        config,
+        store,
+    )
+    assert result.fold_passes == 1
+    assert result.decision == "rejected"
+    assert store.list_experiments()[0].decision == "rejected"
+
+
+def test_reject_still_logged_when_candidate_worse(tmp_path: Path) -> None:
+    config = _config(tmp_path, freeze=_freeze(required_fold_passes=1))
     store = ExperimentStore(config.paths.experiments_db)
     result = compare_systems(
         _system("baseline", CANDIDATE_TICKETS),
@@ -117,3 +167,29 @@ def test_reject_still_logged(tmp_path: Path) -> None:
     experiments = store.list_experiments()
     assert len(experiments) == 1
     assert experiments[0].decision == "rejected"
+    assert experiments[0].policy_evidence is not None
+
+
+def test_bootstrap_gate_can_reject(tmp_path: Path) -> None:
+    # Force bootstrap gate with high min_ci_lower so CI fails.
+    config = _config(
+        tmp_path,
+        freeze=_freeze(
+            required_fold_passes=1,
+            bootstrap_enabled=True,
+            min_ci_lower=100.0,
+        ),
+    )
+    store = ExperimentStore(config.paths.experiments_db)
+    result = compare_systems(
+        _system("baseline", BASELINE_TICKETS),
+        _system("candidate", CANDIDATE_TICKETS),
+        _draws(),
+        config,
+        store,
+    )
+    assert result.bootstrap is not None
+    assert result.decision == "rejected"
+    evidence = store.list_experiments()[0].policy_evidence
+    assert evidence is not None
+    assert evidence["bootstrap"]["passed"] is False

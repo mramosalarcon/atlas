@@ -10,7 +10,9 @@ import yaml
 from atlas.config.settings import (
     AnalyticsSettings,
     AppConfig,
+    BootstrapSettings,
     EvaluationSettings,
+    FreezePolicySettings,
     GreedyOptimizerSettings,
     LotterySettings,
     OptimizerSettings,
@@ -72,11 +74,7 @@ def load_config(path: str | Path) -> AppConfig:
             has_additional=bool(lottery_raw["has_additional"]),
             system_size=int(lottery_raw["system_size"]),
         ),
-        evaluation=EvaluationSettings(
-            validation_ratio=float(evaluation_raw["validation_ratio"]),
-            min_absolute_delta=int(evaluation_raw["min_absolute_delta"]),
-            primary_metric_min_hits=int(evaluation_raw["primary_metric_min_hits"]),
-        ),
+        evaluation=_load_evaluation(evaluation_raw),
         prizes=PrizeSettings(
             provisional=bool(prizes_raw["provisional"]),
             ticket_cost=float(prizes_raw["ticket_cost"]),
@@ -89,6 +87,46 @@ def load_config(path: str | Path) -> AppConfig:
         source_path=config_path,
         analytics=analytics,
         optimizer=optimizer,
+    )
+
+
+def _load_evaluation(evaluation_raw: dict[str, Any]) -> EvaluationSettings:
+    if "freeze_policy" not in evaluation_raw or evaluation_raw["freeze_policy"] is None:
+        raise ConfigError(
+            "Missing evaluation.freeze_policy configuration "
+            "(n_folds, required_fold_passes, bootstrap)"
+        )
+    freeze_raw = evaluation_raw["freeze_policy"]
+    bootstrap_raw = freeze_raw.get("bootstrap") or {}
+    n_folds = int(freeze_raw["n_folds"])
+    required = int(freeze_raw["required_fold_passes"])
+    if n_folds < 2:
+        raise ConfigError(f"freeze_policy.n_folds must be >= 2, got {n_folds}")
+    if required < 1 or required > n_folds:
+        raise ConfigError(
+            f"freeze_policy.required_fold_passes must be between 1 and n_folds "
+            f"({n_folds}), got {required}"
+        )
+    ci_level = float(bootstrap_raw.get("ci_level", 0.95))
+    if not 0.0 < ci_level < 1.0:
+        raise ConfigError(f"bootstrap.ci_level must be between 0 and 1, got {ci_level}")
+
+    return EvaluationSettings(
+        validation_ratio=float(evaluation_raw["validation_ratio"]),
+        min_absolute_delta=int(evaluation_raw["min_absolute_delta"]),
+        primary_metric_min_hits=int(evaluation_raw["primary_metric_min_hits"]),
+        freeze_policy=FreezePolicySettings(
+            n_folds=n_folds,
+            required_fold_passes=required,
+            bootstrap=BootstrapSettings(
+                enabled=bool(bootstrap_raw.get("enabled", False)),
+                n_resamples=int(bootstrap_raw.get("n_resamples", 1000)),
+                ci_level=ci_level,
+                seed=int(bootstrap_raw.get("seed", 42)),
+                min_ci_lower=float(bootstrap_raw.get("min_ci_lower", 0.0)),
+            ),
+            version=str(freeze_raw.get("version", "walkforward-v1")),
+        ),
     )
 
 

@@ -28,6 +28,15 @@ evaluation:
   min_absolute_delta: 1
   # Primary metric for freeze policy: draws where best ticket has >= this many main hits
   primary_metric_min_hits: 3
+  freeze_policy:
+    n_folds: 5
+    required_fold_passes: 4
+    bootstrap:
+      enabled: false
+      n_resamples: 1000
+      ci_level: 0.95
+      seed: 42
+      min_ci_lower: 0
 
 # Placeholder Melate prize amounts for comparable ROI only (provisional: true).
 prizes:

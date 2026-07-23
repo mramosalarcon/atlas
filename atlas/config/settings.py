@@ -24,10 +24,28 @@ class LotterySettings:
 
 
 @dataclass(frozen=True)
+class BootstrapSettings:
+    enabled: bool
+    n_resamples: int
+    ci_level: float
+    seed: int
+    min_ci_lower: float
+
+
+@dataclass(frozen=True)
+class FreezePolicySettings:
+    n_folds: int
+    required_fold_passes: int
+    bootstrap: BootstrapSettings
+    version: str = "walkforward-v1"
+
+
+@dataclass(frozen=True)
 class EvaluationSettings:
     validation_ratio: float
     min_absolute_delta: int
     primary_metric_min_hits: int
+    freeze_policy: FreezePolicySettings
 
 
 @dataclass(frozen=True)

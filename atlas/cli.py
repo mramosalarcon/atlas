@@ -131,19 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         candidate = _load_system(args.candidate_file, rules, name=args.candidate_file.stem)
         store = ExperimentStore(config.paths.experiments_db)
         comparison = compare_systems(baseline, candidate, draws, config, store)
-        print(
-            "ATLAS strategy comparison on historical validation window "
-            "(not a prediction of future draws)."
-        )
-        print(
-            f"Validation contests: {comparison.validation_start}–{comparison.validation_end}"
-        )
-        print(f"Baseline metric (>=3 hits): {comparison.baseline_metric}")
-        print(f"Candidate metric (>=3 hits): {comparison.candidate_metric}")
-        print(f"Delta: {comparison.delta}")
-        print(f"Outcome: {comparison.outcome}")
-        print(f"Decision: {comparison.decision} (threshold={comparison.min_absolute_delta})")
-        print(f"Experiment id: {comparison.experiment.id}")
+        _print_comparison(comparison)
         return 0
 
     if args.command == "list-experiments":
@@ -269,27 +257,50 @@ def main(argv: list[str] | None = None) -> int:
             )
             store = ExperimentStore(config.paths.experiments_db)
             comparison = compare_systems(baseline, system, draws, config, store)
-            print(
-                "ATLAS strategy comparison on historical validation window "
-                "(not a prediction of future draws)."
-            )
-            print(
-                f"Validation contests: "
-                f"{comparison.validation_start}–{comparison.validation_end}"
-            )
-            print(f"Baseline metric (>=3 hits): {comparison.baseline_metric}")
-            print(f"Candidate metric (>=3 hits): {comparison.candidate_metric}")
-            print(f"Delta: {comparison.delta}")
-            print(f"Outcome: {comparison.outcome}")
-            print(
-                f"Decision: {comparison.decision} "
-                f"(threshold={comparison.min_absolute_delta})"
-            )
-            print(f"Experiment id: {comparison.experiment.id}")
+            _print_comparison(comparison)
         return 0
 
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def _print_comparison(comparison) -> None:
+    print(
+        "ATLAS strategy comparison with walk-forward freeze policy "
+        "(not a prediction of future draws)."
+    )
+    print(
+        f"Holdout diagnostic contests: "
+        f"{comparison.validation_start}–{comparison.validation_end}"
+    )
+    print(
+        f"Holdout metric (>=3 hits): baseline={comparison.baseline_metric} "
+        f"candidate={comparison.candidate_metric} delta={comparison.delta} "
+        f"({comparison.outcome})"
+    )
+    print(
+        f"Walk-forward fold passes: {comparison.fold_passes}/{len(comparison.folds)} "
+        f"(required {comparison.required_fold_passes}, "
+        f"min_absolute_delta={comparison.min_absolute_delta})"
+    )
+    for fold in comparison.folds:
+        status = "pass" if fold.passed else "fail"
+        print(
+            f"  fold {fold.fold_index} contests {fold.contest_start}–{fold.contest_end}: "
+            f"delta={fold.delta} [{status}]"
+        )
+    if comparison.bootstrap is not None:
+        boot = comparison.bootstrap
+        print(
+            f"Bootstrap CI mean_delta={boot.mean_delta:.3f} "
+            f"[{boot.ci_lower:.3f}, {boot.ci_upper:.3f}] "
+            f"(level={boot.ci_level}, seed={boot.seed})"
+        )
+    print(
+        f"Decision: {comparison.decision} "
+        f"(policy={comparison.freeze_policy_version})"
+    )
+    print(f"Experiment id: {comparison.experiment.id}")
 
 
 def _load_system(path: Path, rules: LotteryRules, name: str) -> TicketSystem:
