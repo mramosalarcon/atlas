@@ -8,9 +8,12 @@ from typing import Any
 import yaml
 
 from atlas.config.settings import (
+    AnalyticsSettings,
     AppConfig,
     EvaluationSettings,
+    GreedyOptimizerSettings,
     LotterySettings,
+    OptimizerSettings,
     PathSettings,
     PrizeSettings,
 )
@@ -33,6 +36,27 @@ def load_config(path: str | Path) -> AppConfig:
     lottery_raw = raw["lottery"]
     evaluation_raw = raw["evaluation"]
     prizes_raw = raw["prizes"]
+
+    analytics: AnalyticsSettings | None = None
+    if "analytics" in raw and raw["analytics"] is not None:
+        analytics_raw = raw["analytics"]
+        windows = tuple(int(w) for w in analytics_raw["rolling_windows"])
+        analytics = AnalyticsSettings(
+            rolling_windows=windows,
+            analytics_db=_resolve(root, analytics_raw["analytics_db"]),
+        )
+
+    optimizer: OptimizerSettings | None = None
+    if "optimizer" in raw and raw["optimizer"] is not None:
+        optimizer_raw = raw["optimizer"]
+        greedy_raw = optimizer_raw.get("greedy") or {}
+        optimizer = OptimizerSettings(
+            seed=int(optimizer_raw["seed"]),
+            candidate_pool_size=int(optimizer_raw["candidate_pool_size"]),
+            greedy=GreedyOptimizerSettings(
+                enabled=bool(greedy_raw.get("enabled", True)),
+            ),
+        )
 
     return AppConfig(
         paths=PathSettings(
@@ -63,7 +87,27 @@ def load_config(path: str | Path) -> AppConfig:
             hits_6=float(prizes_raw["hits_6"]),
         ),
         source_path=config_path,
+        analytics=analytics,
+        optimizer=optimizer,
     )
+
+
+def require_analytics(config: AppConfig) -> AnalyticsSettings:
+    if config.analytics is None:
+        raise ConfigError(
+            "Missing analytics configuration: add an 'analytics' section to "
+            f"{config.source_path}"
+        )
+    return config.analytics
+
+
+def require_optimizer(config: AppConfig) -> OptimizerSettings:
+    if config.optimizer is None:
+        raise ConfigError(
+            "Missing optimizer configuration: add an 'optimizer' section to "
+            f"{config.source_path}"
+        )
+    return config.optimizer
 
 
 def _resolve(root: Path, value: str) -> Path:

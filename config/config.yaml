@@ -5,6 +5,16 @@ paths:
   raw_db: data/processed/raw_history.sqlite3
   experiments_db: data/processed/experiments.sqlite3
 
+analytics:
+  rolling_windows: [10, 20, 50, 100]
+  analytics_db: data/processed/analytics.sqlite3
+
+optimizer:
+  seed: 42
+  candidate_pool_size: 500
+  greedy:
+    enabled: true
+
 lottery:
   name: Melate
   min_number: 1

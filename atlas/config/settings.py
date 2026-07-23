@@ -31,6 +31,24 @@ class EvaluationSettings:
 
 
 @dataclass(frozen=True)
+class AnalyticsSettings:
+    rolling_windows: tuple[int, ...]
+    analytics_db: Path
+
+
+@dataclass(frozen=True)
+class GreedyOptimizerSettings:
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class OptimizerSettings:
+    seed: int
+    candidate_pool_size: int
+    greedy: GreedyOptimizerSettings
+
+
+@dataclass(frozen=True)
 class PrizeSettings:
     provisional: bool
     ticket_cost: float
@@ -61,3 +79,5 @@ class AppConfig:
     evaluation: EvaluationSettings
     prizes: PrizeSettings
     source_path: Path
+    analytics: AnalyticsSettings | None = None
+    optimizer: OptimizerSettings | None = None
