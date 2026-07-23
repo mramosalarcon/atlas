@@ -60,10 +60,17 @@ class GreedyOptimizerSettings:
 
 
 @dataclass(frozen=True)
+class CoveringOptimizerSettings:
+    enabled: bool
+    pair_weight: str
+
+
+@dataclass(frozen=True)
 class OptimizerSettings:
     seed: int
     candidate_pool_size: int
     greedy: GreedyOptimizerSettings
+    covering: CoveringOptimizerSettings
 
 
 @dataclass(frozen=True)

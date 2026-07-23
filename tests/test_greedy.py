@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from atlas.config.settings import GreedyOptimizerSettings, OptimizerSettings
+from atlas.config.settings import (
+    CoveringOptimizerSettings,
+    GreedyOptimizerSettings,
+    OptimizerSettings,
+)
 from atlas.domain.draw import Draw
 from atlas.domain.lottery_rules import LotteryRules
 from atlas.domain.ticket import Ticket
@@ -19,6 +23,9 @@ def _settings(seed: int = 1, pool: int = 40) -> OptimizerSettings:
         seed=seed,
         candidate_pool_size=pool,
         greedy=GreedyOptimizerSettings(enabled=True),
+        covering=CoveringOptimizerSettings(
+            enabled=True, pair_weight="train_frequency"
+        ),
     )
 
 

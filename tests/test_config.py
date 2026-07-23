@@ -80,6 +80,23 @@ def test_load_default_melate_config() -> None:
     assert config.analytics.rolling_windows == (10, 20, 50, 100)
     assert config.optimizer is not None
     assert config.optimizer.seed == 42
+    assert config.optimizer.covering.enabled is True
+    assert config.optimizer.covering.pair_weight == "train_frequency"
+
+
+def test_invalid_covering_pair_weight_fails(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_payload(
+        optimizer={
+            "seed": 1,
+            "candidate_pool_size": 10,
+            "greedy": {"enabled": True},
+            "covering": {"enabled": True, "pair_weight": "bogus"},
+        }
+    )
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ConfigError, match="pair_weight"):
+        load_config(config_path)
 
 
 def test_missing_config_fails_clearly(tmp_path: Path) -> None:

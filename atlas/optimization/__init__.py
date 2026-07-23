@@ -1,5 +1,6 @@
 """Optimization package."""
 
+from atlas.optimization.covering import CoveringOptimizer, format_covering_report
 from atlas.optimization.greedy import (
     GreedyOptimizer,
     covered_pair_count,
@@ -15,10 +16,12 @@ from atlas.optimization.pairs import (
 from atlas.optimization.strategy import OptimizationStrategy
 
 __all__ = [
+    "CoveringOptimizer",
     "GreedyOptimizer",
     "OptimizationStrategy",
     "coverage_union",
     "covered_pair_count",
+    "format_covering_report",
     "format_optimize_report",
     "generate_candidate_tickets",
     "new_pair_count",

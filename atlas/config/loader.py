@@ -11,6 +11,7 @@ from atlas.config.settings import (
     AnalyticsSettings,
     AppConfig,
     BootstrapSettings,
+    CoveringOptimizerSettings,
     EvaluationSettings,
     FreezePolicySettings,
     GreedyOptimizerSettings,
@@ -52,11 +53,22 @@ def load_config(path: str | Path) -> AppConfig:
     if "optimizer" in raw and raw["optimizer"] is not None:
         optimizer_raw = raw["optimizer"]
         greedy_raw = optimizer_raw.get("greedy") or {}
+        covering_raw = optimizer_raw.get("covering") or {}
+        pair_weight = str(covering_raw.get("pair_weight", "train_frequency"))
+        if pair_weight not in {"train_frequency", "uniform"}:
+            raise ConfigError(
+                f"optimizer.covering.pair_weight must be "
+                f"'train_frequency' or 'uniform', got {pair_weight!r}"
+            )
         optimizer = OptimizerSettings(
             seed=int(optimizer_raw["seed"]),
             candidate_pool_size=int(optimizer_raw["candidate_pool_size"]),
             greedy=GreedyOptimizerSettings(
                 enabled=bool(greedy_raw.get("enabled", True)),
+            ),
+            covering=CoveringOptimizerSettings(
+                enabled=bool(covering_raw.get("enabled", True)),
+                pair_weight=pair_weight,
             ),
         )
 

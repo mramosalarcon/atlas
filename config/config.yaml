@@ -14,6 +14,9 @@ optimizer:
   candidate_pool_size: 500
   greedy:
     enabled: true
+  covering:
+    enabled: true
+    pair_weight: train_frequency
 
 lottery:
   name: Melate
