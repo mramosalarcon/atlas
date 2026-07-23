@@ -1,0 +1,34 @@
+# ATLAS configuration — Melate rules and evaluation settings live here, not in code.
+
+paths:
+  csv: data/raw/Melate.csv
+  raw_db: data/processed/raw_history.sqlite3
+  experiments_db: data/processed/experiments.sqlite3
+
+lottery:
+  name: Melate
+  min_number: 1
+  max_number: 56
+  main_count: 6
+  has_additional: true
+  system_size: 8
+
+evaluation:
+  validation_ratio: 0.15
+  min_absolute_delta: 1
+  # Primary metric for freeze policy: draws where best ticket has >= this many main hits
+  primary_metric_min_hits: 3
+
+# Placeholder Melate prize amounts for comparable ROI only (provisional: true).
+prizes:
+  provisional: true
+  ticket_cost: 15.0
+  hits_2: 20.0
+  hits_2_plus_additional: 30.0
+  hits_3: 40.0
+  hits_3_plus_additional: 160.0
+  hits_4: 1000.0
+  hits_4_plus_additional: 4600.0
+  hits_5: 130000.0
+  hits_5_plus_additional: 150000.0
+  hits_6: 30000000.0
