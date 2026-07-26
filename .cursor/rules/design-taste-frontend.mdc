@@ -1,0 +1,15 @@
+---
+description: Always load and follow design-taste when building or polishing frontend UI
+alwaysApply: true
+---
+
+# Frontend UI: use design-taste
+
+Whenever you create, redesign, polish, or significantly restyle a front-end interface, **read and follow** the design-taste skill **before** writing UI code.
+
+Skill path (first that exists):
+- `.agents/skills/design-taste/SKILL.md`
+- `~/.agents/skills/design-taste/SKILL.md`
+- `~/.cursor/skills/design-taste/SKILL.md`
+
+Follow its workflow (Design Read + dials → build → critique → `reference/pre-flight.md`). Use reference files under that skill when relevant. If the skill is missing, say so before improvising.

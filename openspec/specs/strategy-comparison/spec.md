@@ -51,3 +51,14 @@ The system SHALL persist walk-forward fold evidence (and bootstrap summary when 
 #### Scenario: Rejected experiments still include evidence
 - **WHEN** a candidate is rejected under the walk-forward policy
 - **THEN** an experiment record is still written with decision `rejected` and fold evidence
+
+### Requirement: Freeze policy version distinguishes bootstrap-enabled defaults
+The system SHALL record a freeze-policy version string that reflects when shipped defaults include the bootstrap gate, and SHALL persist that version with experiment policy evidence.
+
+#### Scenario: Shipped version indicates bootstrap era
+- **WHEN** shipped Melate config is loaded with bootstrap enabled by default
+- **THEN** `evaluation.freeze_policy.version` identifies the walk-forward-plus-bootstrap policy era
+
+#### Scenario: Version stored on compare
+- **WHEN** a comparison completes under the shipped defaults
+- **THEN** the experiment policy evidence includes the same freeze-policy version string

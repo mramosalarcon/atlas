@@ -28,10 +28,23 @@ from atlas.infrastructure.draw_repository import import_history, load_draws
 from atlas.infrastructure.experiment_store import ExperimentStore
 from atlas.optimization import (
     CoveringOptimizer,
+    EnsembleOptimizer,
+    EnsemblePoolError,
     GreedyOptimizer,
+    LocalSearchOptimizer,
     covered_pair_count,
     format_covering_report,
+    format_ensemble_report,
+    format_local_search_report,
     format_optimize_report,
+)
+from atlas.optimization.ensemble import draft_from_pool, pool_tickets_from_files
+from atlas.optimization.local_search import pair_coverage_count, primary_metric_count
+from atlas.tournament import (
+    format_tournament_report,
+    resolve_roster,
+    run_ladder,
+    write_tournament_summary,
 )
 
 DEFAULT_CONFIG = Path("config/config.yaml")
@@ -118,6 +131,92 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional baseline system JSON to compare against on validation",
+    )
+
+    local = sub.add_parser(
+        "optimize-local",
+        help=(
+            "Polish a covering-seeded system via train-only local search "
+            "(does not auto-accept; optional --compare-baseline uses freeze policy)"
+        ),
+    )
+    local.add_argument(
+        "--output",
+        type=Path,
+        default=Path("data/exports/local_search_candidate.json"),
+        help="Export path for the candidate system JSON",
+    )
+    local.add_argument(
+        "--compare-baseline",
+        type=Path,
+        default=None,
+        help="Optional baseline system JSON to compare against on validation",
+    )
+
+    ensemble = sub.add_parser(
+        "optimize-ensemble",
+        help=(
+            "Draft an 8-ticket candidate by pooling multi-seed greedy/covering "
+            "tickets and/or --sources JSON files (does not auto-accept; "
+            "optional --compare-baseline uses freeze policy)"
+        ),
+    )
+    ensemble.add_argument(
+        "--output",
+        type=Path,
+        default=Path("data/exports/ensemble_candidate.json"),
+        help="Export path for the candidate system JSON",
+    )
+    ensemble.add_argument(
+        "--sources",
+        type=Path,
+        nargs="*",
+        default=[],
+        help="Optional system JSON files whose tickets are unioned into the pool",
+    )
+    ensemble.add_argument(
+        "--files-only",
+        action="store_true",
+        help="Skip multi-seed generate; draft only from --sources files",
+    )
+    ensemble.add_argument(
+        "--compare-baseline",
+        type=Path,
+        default=None,
+        help="Optional baseline system JSON to compare against on validation",
+    )
+
+    tournament = sub.add_parser(
+        "run-tournament",
+        help=(
+            "Run a ladder tournament: challengers face the current champion under "
+            "freeze policy (does not predict future draws)"
+        ),
+    )
+    tournament.add_argument(
+        "--champion",
+        type=Path,
+        default=None,
+        help="Champion system JSON (defaults to config tournament.champion)",
+    )
+    tournament.add_argument(
+        "--challengers",
+        type=Path,
+        nargs="*",
+        default=[],
+        help="Explicit challenger system JSON paths",
+    )
+    tournament.add_argument(
+        "--roster-glob",
+        type=str,
+        default=None,
+        help="Glob for challenger JSONs (defaults to config tournament.roster_glob)",
+    )
+    tournament.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to write tournament summary JSON",
     )
     return parser
 
@@ -326,6 +425,199 @@ def main(argv: list[str] | None = None) -> int:
             store = ExperimentStore(config.paths.experiments_db)
             comparison = compare_systems(baseline, system, draws, config, store)
             _print_comparison(comparison)
+        return 0
+
+    if args.command == "optimize-local":
+        try:
+            optimizer_settings = require_optimizer(config)
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if not optimizer_settings.local_search.enabled:
+            print("error: optimizer.local_search.enabled is false", file=sys.stderr)
+            return 1
+        draws = load_draws(config.paths.raw_db, rules)
+        if not draws:
+            print("error: no draws available; run import-history first", file=sys.stderr)
+            return 1
+        train, _validation = split_train_validation(
+            draws, config.evaluation.validation_ratio
+        )
+        optimizer = LocalSearchOptimizer()
+        system = optimizer.optimize(
+            train,
+            rules,
+            optimizer_settings,
+            name="local-search",
+        )
+        _write_system(args.output, system)
+        print(
+            format_local_search_report(
+                system,
+                seed=optimizer_settings.seed,
+                max_passes=optimizer_settings.local_search.max_passes,
+                train_contests=(train[0].contest, train[-1].contest),
+                train_metric=optimizer.last_train_metric,
+                pairs_covered=optimizer.last_pairs_covered,
+                accepts=optimizer.last_accepts,
+            )
+        )
+        print(f"Exported candidate: {args.output}")
+        print(
+            "Accept/reject requires freeze-policy compare "
+            "(pass --compare-baseline or run compare-systems)."
+        )
+        if args.compare_baseline is not None:
+            baseline = _load_system(
+                args.compare_baseline, rules, name=args.compare_baseline.stem
+            )
+            store = ExperimentStore(config.paths.experiments_db)
+            comparison = compare_systems(baseline, system, draws, config, store)
+            _print_comparison(comparison)
+        return 0
+
+    if args.command == "optimize-ensemble":
+        try:
+            optimizer_settings = require_optimizer(config)
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if not optimizer_settings.ensemble.enabled:
+            print("error: optimizer.ensemble.enabled is false", file=sys.stderr)
+            return 1
+        draws = load_draws(config.paths.raw_db, rules)
+        if not draws:
+            print("error: no draws available; run import-history first", file=sys.stderr)
+            return 1
+        train, _validation = split_train_validation(
+            draws, config.evaluation.validation_ratio
+        )
+        file_pool = (
+            pool_tickets_from_files(args.sources, rules) if args.sources else {}
+        )
+        if args.files_only:
+            if not file_pool:
+                print(
+                    "error: --files-only requires at least one --sources file",
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                tickets = draft_from_pool(
+                    file_pool,
+                    train,
+                    rules,
+                    min_hits=optimizer_settings.ensemble.primary_metric_min_hits,
+                )
+            except EnsemblePoolError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            system = TicketSystem.create(tickets, rules, name="ensemble")
+            pool_size = len(file_pool)
+            seeds: tuple[int, ...] = ()
+            sources = tuple(str(p) for p in args.sources)
+            train_metric = primary_metric_count(
+                system,
+                train,
+                min_hits=optimizer_settings.ensemble.primary_metric_min_hits,
+            )
+            pairs = pair_coverage_count(system)
+        else:
+            optimizer = EnsembleOptimizer()
+            try:
+                system = optimizer.optimize(
+                    train,
+                    rules,
+                    optimizer_settings,
+                    name="ensemble",
+                    extra_pool=file_pool or None,
+                )
+            except EnsemblePoolError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            pool_size = optimizer.last_pool_size
+            seeds = optimizer.last_seeds
+            sources = optimizer.last_sources
+            if args.sources:
+                sources = sources + tuple(str(p) for p in args.sources)
+            train_metric = optimizer.last_train_metric
+            pairs = optimizer.last_pairs_covered
+        _write_system(args.output, system)
+        print(
+            format_ensemble_report(
+                system,
+                seeds=seeds,
+                sources=sources,
+                pool_size=pool_size,
+                train_contests=(train[0].contest, train[-1].contest),
+                train_metric=train_metric,
+                pairs_covered=pairs,
+            )
+        )
+        print(f"Exported candidate: {args.output}")
+        print(
+            "Accept/reject requires freeze-policy compare "
+            "(pass --compare-baseline or run compare-systems)."
+        )
+        if args.compare_baseline is not None:
+            baseline = _load_system(
+                args.compare_baseline, rules, name=args.compare_baseline.stem
+            )
+            store = ExperimentStore(config.paths.experiments_db)
+            comparison = compare_systems(baseline, system, draws, config, store)
+            _print_comparison(comparison)
+        return 0
+
+    if args.command == "run-tournament":
+        champion_path = args.champion
+        roster_glob = args.roster_glob
+        if champion_path is None and config.tournament is not None:
+            champion_path = config.tournament.champion
+        if roster_glob is None and config.tournament is not None:
+            roster_glob = config.tournament.roster_glob
+        if champion_path is None:
+            print(
+                "error: --champion is required (or set tournament.champion in config)",
+                file=sys.stderr,
+            )
+            return 1
+        challenger_paths = resolve_roster(
+            champion=champion_path,
+            explicit=args.challengers,
+            roster_glob=roster_glob,
+            root=config.source_path.resolve().parent.parent,
+        )
+        if not challenger_paths and not args.challengers and roster_glob is None:
+            print(
+                "error: provide --challengers and/or --roster-glob "
+                "(or set tournament.roster_glob in config)",
+                file=sys.stderr,
+            )
+            return 1
+        if not challenger_paths:
+            print("error: no challengers resolved after excluding champion", file=sys.stderr)
+            return 1
+        draws = load_draws(config.paths.raw_db, rules)
+        if not draws:
+            print("error: no draws available; run import-history first", file=sys.stderr)
+            return 1
+        champion = _load_system(champion_path, rules, name=champion_path.stem)
+        challengers = [
+            (path, _load_system(path, rules, name=path.stem)) for path in challenger_paths
+        ]
+        store = ExperimentStore(config.paths.experiments_db)
+        summary = run_ladder(
+            champion=champion,
+            champion_path=champion_path,
+            challengers=challengers,
+            draws=draws,
+            config=config,
+            store=store,
+        )
+        print(format_tournament_report(summary))
+        if args.output is not None:
+            write_tournament_summary(args.output, summary)
+            print(f"Wrote tournament summary: {args.output}")
         return 0
 
     parser.error(f"Unknown command: {args.command}")

@@ -17,3 +17,17 @@ The system SHALL run optimizer search exclusively on the draw set passed into th
 #### Scenario: Strategy does not require validation draws
 - **WHEN** optimize is invoked with only train draws
 - **THEN** the strategy produces a system without accessing other draw partitions
+
+### Requirement: Strategies may compose other strategies for seeding
+The system SHALL allow an optimization strategy to invoke another strategy solely to produce a seed system from the same provided draw set, rules, and settings, without reading validation or holdout draws.
+
+#### Scenario: Seed composition stays on provided draws
+- **WHEN** a composing strategy seeds from another strategy during optimize
+- **THEN** both the seed call and the subsequent search use only the draw set passed into the outer optimize invocation
+
+### Requirement: Strategies may run multiple seeded invocations for ensembles
+The system SHALL allow an optimization strategy to invoke other strategies multiple times with different seeds on the same provided draw set for the purpose of building an ensemble ticket pool, without reading validation or holdout draws.
+
+#### Scenario: Multi-seed composition stays on provided draws
+- **WHEN** an ensemble strategy runs source strategies across multiple seeds during optimize
+- **THEN** every source invocation uses only the draw set passed into the outer optimize call

@@ -76,6 +76,53 @@ The system SHALL fail with a clear error if covering optimize is invoked while c
 - **WHEN** config sets an unsupported `pair_weight` value
 - **THEN** configuration load or optimize setup raises an error naming the invalid value
 
+### Requirement: Local-search optimizer settings are loaded from config
+The system SHALL load local-search optimizer settings from YAML config, including an enabled flag and a maximum pass budget, and MUST NOT hardcode those values inside the local-search strategy.
+
+#### Scenario: Default local-search settings present
+- **WHEN** `config/config.yaml` defines `optimizer.local_search.enabled` and `optimizer.local_search.max_passes`
+- **THEN** the loaded config exposes those values to the local-search optimizer
+
+### Requirement: Missing or invalid local-search settings fail clearly when local optimize is requested
+The system SHALL fail with a clear error if local-search optimize is invoked while local search is disabled, or if `max_passes` is less than 1.
+
+#### Scenario: Local search disabled
+- **WHEN** a user runs local-search optimize and `optimizer.local_search.enabled` is false
+- **THEN** the system raises an error stating local search is disabled
+
+#### Scenario: Invalid max_passes
+- **WHEN** config sets `max_passes` less than 1
+- **THEN** configuration load or optimize setup raises an error naming the invalid value
+
+### Requirement: Ensemble optimizer settings are loaded from config
+The system SHALL load ensemble optimizer settings from YAML config, including an enabled flag, a list of seeds, and a list of source strategy names, and MUST NOT hardcode those values inside the ensemble strategy.
+
+#### Scenario: Default ensemble settings present
+- **WHEN** `config/config.yaml` defines `optimizer.ensemble.enabled`, `optimizer.ensemble.seeds`, and `optimizer.ensemble.sources`
+- **THEN** the loaded config exposes those values to the ensemble optimizer
+
+### Requirement: Invalid ensemble settings fail clearly
+The system SHALL fail with a clear error if ensemble optimize is invoked while ensemble is disabled, if `seeds` is empty, if `sources` is empty, or if a source name is not supported.
+
+#### Scenario: Ensemble disabled
+- **WHEN** a user runs ensemble optimize and `optimizer.ensemble.enabled` is false
+- **THEN** the system raises an error stating ensemble is disabled
+
+#### Scenario: Unsupported source strategy
+- **WHEN** config lists a source strategy name that is not supported
+- **THEN** configuration load or optimize setup raises an error naming the invalid source
+
+### Requirement: Optional tournament defaults are loaded from config
+The system SHALL load optional tournament defaults from YAML when a `tournament` section is present, including a default champion path and roster glob, and MUST NOT require that section for other ATLAS commands to work.
+
+#### Scenario: Tournament section absent is allowed
+- **WHEN** config has no `tournament` section
+- **THEN** configuration load succeeds and tournament CLI requires explicit champion/challenger arguments
+
+#### Scenario: Defaults exposed when present
+- **WHEN** `config/config.yaml` defines `tournament.champion` and `tournament.roster_glob`
+- **THEN** the loaded config exposes those values for tournament CLI defaults
+
 ### Requirement: Freeze-policy settings are loaded from config
 The system SHALL load freeze-policy settings from YAML config, including walk-forward fold count, required fold passes, and optional bootstrap parameters, and MUST NOT hardcode those values inside the comparison engine.
 
@@ -86,6 +133,20 @@ The system SHALL load freeze-policy settings from YAML config, including walk-fo
 #### Scenario: Bootstrap settings optional with defaults
 - **WHEN** bootstrap is present with `enabled`, `n_resamples`, `ci_level`, `seed`, and `min_ci_lower`
 - **THEN** the loaded config exposes those bootstrap settings to comparison
+
+### Requirement: Shipped Melate config enables bootstrap by default
+The system SHALL ship Melate configuration with freeze-policy bootstrap enabled and with documented default knobs (`n_resamples`, `ci_level`, `seed`, `min_ci_lower`) so accept decisions apply the bootstrap gate without requiring a manual config edit.
+
+#### Scenario: Default config loads bootstrap enabled
+- **WHEN** the application loads `config/config.yaml`
+- **THEN** `evaluation.freeze_policy.bootstrap.enabled` is true and bootstrap numeric settings are present
+
+### Requirement: Bootstrap numeric settings fail clearly when invalid
+The system SHALL fail configuration load with a clear error when `n_resamples` is less than 1 (in addition to existing `ci_level` validation).
+
+#### Scenario: Invalid n_resamples
+- **WHEN** config sets `bootstrap.n_resamples` less than 1
+- **THEN** configuration load raises an error naming `n_resamples`
 
 ### Requirement: Invalid freeze-policy config fails clearly
 The system SHALL fail with a clear error if freeze-policy settings are inconsistent (e.g. `required_fold_passes` greater than `n_folds`, or `n_folds` < 2).

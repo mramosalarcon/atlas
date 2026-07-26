@@ -12,13 +12,16 @@ from atlas.config.settings import (
     AppConfig,
     BootstrapSettings,
     CoveringOptimizerSettings,
+    EnsembleOptimizerSettings,
     EvaluationSettings,
     FreezePolicySettings,
     GreedyOptimizerSettings,
+    LocalSearchOptimizerSettings,
     LotterySettings,
     OptimizerSettings,
     PathSettings,
     PrizeSettings,
+    TournamentSettings,
 )
 
 
@@ -54,12 +57,35 @@ def load_config(path: str | Path) -> AppConfig:
         optimizer_raw = raw["optimizer"]
         greedy_raw = optimizer_raw.get("greedy") or {}
         covering_raw = optimizer_raw.get("covering") or {}
+        local_raw = optimizer_raw.get("local_search") or {}
+        ensemble_raw = optimizer_raw.get("ensemble") or {}
         pair_weight = str(covering_raw.get("pair_weight", "train_frequency"))
         if pair_weight not in {"train_frequency", "uniform"}:
             raise ConfigError(
                 f"optimizer.covering.pair_weight must be "
                 f"'train_frequency' or 'uniform', got {pair_weight!r}"
             )
+        max_passes = int(local_raw.get("max_passes", 20))
+        if max_passes < 1:
+            raise ConfigError(
+                f"optimizer.local_search.max_passes must be >= 1, got {max_passes}"
+            )
+        seeds_raw = ensemble_raw.get("seeds", [42, 7, 99, 123, 256])
+        if not isinstance(seeds_raw, list) or not seeds_raw:
+            raise ConfigError("optimizer.ensemble.seeds must be a non-empty list")
+        seeds = tuple(int(s) for s in seeds_raw)
+        sources_raw = ensemble_raw.get("sources", ["greedy", "covering"])
+        if not isinstance(sources_raw, list) or not sources_raw:
+            raise ConfigError("optimizer.ensemble.sources must be a non-empty list")
+        allowed_sources = {"greedy", "covering"}
+        sources = tuple(str(s) for s in sources_raw)
+        unknown = [s for s in sources if s not in allowed_sources]
+        if unknown:
+            raise ConfigError(
+                f"optimizer.ensemble.sources unknown: {unknown}; "
+                f"allowed: {sorted(allowed_sources)}"
+            )
+        min_hits = int(evaluation_raw["primary_metric_min_hits"])
         optimizer = OptimizerSettings(
             seed=int(optimizer_raw["seed"]),
             candidate_pool_size=int(optimizer_raw["candidate_pool_size"]),
@@ -70,6 +96,25 @@ def load_config(path: str | Path) -> AppConfig:
                 enabled=bool(covering_raw.get("enabled", True)),
                 pair_weight=pair_weight,
             ),
+            local_search=LocalSearchOptimizerSettings(
+                enabled=bool(local_raw.get("enabled", True)),
+                max_passes=max_passes,
+                primary_metric_min_hits=min_hits,
+            ),
+            ensemble=EnsembleOptimizerSettings(
+                enabled=bool(ensemble_raw.get("enabled", True)),
+                seeds=seeds,
+                sources=sources,
+                primary_metric_min_hits=min_hits,
+            ),
+        )
+
+    tournament: TournamentSettings | None = None
+    if "tournament" in raw and raw["tournament"] is not None:
+        tournament_raw = raw["tournament"]
+        tournament = TournamentSettings(
+            champion=_resolve(root, str(tournament_raw["champion"])),
+            roster_glob=str(tournament_raw["roster_glob"]),
         )
 
     return AppConfig(
@@ -99,6 +144,7 @@ def load_config(path: str | Path) -> AppConfig:
         source_path=config_path,
         analytics=analytics,
         optimizer=optimizer,
+        tournament=tournament,
     )
 
 
@@ -122,6 +168,11 @@ def _load_evaluation(evaluation_raw: dict[str, Any]) -> EvaluationSettings:
     ci_level = float(bootstrap_raw.get("ci_level", 0.95))
     if not 0.0 < ci_level < 1.0:
         raise ConfigError(f"bootstrap.ci_level must be between 0 and 1, got {ci_level}")
+    n_resamples = int(bootstrap_raw.get("n_resamples", 1000))
+    if n_resamples < 1:
+        raise ConfigError(
+            f"bootstrap.n_resamples must be >= 1, got {n_resamples}"
+        )
 
     return EvaluationSettings(
         validation_ratio=float(evaluation_raw["validation_ratio"]),
@@ -132,7 +183,7 @@ def _load_evaluation(evaluation_raw: dict[str, Any]) -> EvaluationSettings:
             required_fold_passes=required,
             bootstrap=BootstrapSettings(
                 enabled=bool(bootstrap_raw.get("enabled", False)),
-                n_resamples=int(bootstrap_raw.get("n_resamples", 1000)),
+                n_resamples=n_resamples,
                 ci_level=ci_level,
                 seed=int(bootstrap_raw.get("seed", 42)),
                 min_ci_lower=float(bootstrap_raw.get("min_ci_lower", 0.0)),

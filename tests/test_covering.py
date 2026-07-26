@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from atlas.config.settings import (
     CoveringOptimizerSettings,
+    EnsembleOptimizerSettings,
     GreedyOptimizerSettings,
+    LocalSearchOptimizerSettings,
     OptimizerSettings,
 )
 from atlas.domain.draw import Draw
@@ -24,6 +26,15 @@ def _settings(pair_weight: str = "train_frequency", seed: int = 1) -> OptimizerS
         candidate_pool_size=10,
         greedy=GreedyOptimizerSettings(enabled=True),
         covering=CoveringOptimizerSettings(enabled=True, pair_weight=pair_weight),
+        local_search=LocalSearchOptimizerSettings(
+            enabled=True, max_passes=5, primary_metric_min_hits=3
+        ),
+        ensemble=EnsembleOptimizerSettings(
+            enabled=True,
+            seeds=(1, 2),
+            sources=("greedy", "covering"),
+            primary_metric_min_hits=3,
+        ),
     )
 
 

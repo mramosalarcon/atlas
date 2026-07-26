@@ -17,6 +17,17 @@ optimizer:
   covering:
     enabled: true
     pair_weight: train_frequency
+  local_search:
+    enabled: true
+    max_passes: 20
+  ensemble:
+    enabled: true
+    seeds: [42, 7, 99, 123, 256]
+    sources: [greedy, covering]
+
+tournament:
+  champion: data/exports/local_search_candidate.json
+  roster_glob: data/exports/*_candidate.json
 
 lottery:
   name: Melate
@@ -34,8 +45,9 @@ evaluation:
   freeze_policy:
     n_folds: 5
     required_fold_passes: 4
+    version: walkforward-v1+bootstrap
     bootstrap:
-      enabled: false
+      enabled: true
       n_resamples: 1000
       ci_level: 0.95
       seed: 42

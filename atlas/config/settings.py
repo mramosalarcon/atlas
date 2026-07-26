@@ -66,11 +66,28 @@ class CoveringOptimizerSettings:
 
 
 @dataclass(frozen=True)
+class LocalSearchOptimizerSettings:
+    enabled: bool
+    max_passes: int
+    primary_metric_min_hits: int
+
+
+@dataclass(frozen=True)
+class EnsembleOptimizerSettings:
+    enabled: bool
+    seeds: tuple[int, ...]
+    sources: tuple[str, ...]
+    primary_metric_min_hits: int
+
+
+@dataclass(frozen=True)
 class OptimizerSettings:
     seed: int
     candidate_pool_size: int
     greedy: GreedyOptimizerSettings
     covering: CoveringOptimizerSettings
+    local_search: LocalSearchOptimizerSettings
+    ensemble: EnsembleOptimizerSettings
 
 
 @dataclass(frozen=True)
@@ -98,6 +115,12 @@ class PrizeSettings:
 
 
 @dataclass(frozen=True)
+class TournamentSettings:
+    champion: Path
+    roster_glob: str
+
+
+@dataclass(frozen=True)
 class AppConfig:
     paths: PathSettings
     lottery: LotterySettings
@@ -106,3 +129,4 @@ class AppConfig:
     source_path: Path
     analytics: AnalyticsSettings | None = None
     optimizer: OptimizerSettings | None = None
+    tournament: TournamentSettings | None = None

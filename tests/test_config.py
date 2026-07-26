@@ -75,13 +75,35 @@ def test_load_default_melate_config() -> None:
     assert config.evaluation.validation_ratio == 0.15
     assert config.evaluation.freeze_policy.n_folds == 5
     assert config.evaluation.freeze_policy.required_fold_passes == 4
-    assert config.evaluation.freeze_policy.bootstrap.enabled is False
+    assert config.evaluation.freeze_policy.bootstrap.enabled is True
+    assert config.evaluation.freeze_policy.bootstrap.n_resamples == 1000
+    assert config.evaluation.freeze_policy.bootstrap.ci_level == 0.95
+    assert config.evaluation.freeze_policy.bootstrap.seed == 42
+    assert config.evaluation.freeze_policy.bootstrap.min_ci_lower == 0
+    assert config.evaluation.freeze_policy.version == "walkforward-v1+bootstrap"
     assert config.analytics is not None
     assert config.analytics.rolling_windows == (10, 20, 50, 100)
     assert config.optimizer is not None
     assert config.optimizer.seed == 42
     assert config.optimizer.covering.enabled is True
     assert config.optimizer.covering.pair_weight == "train_frequency"
+    assert config.optimizer.local_search.enabled is True
+    assert config.optimizer.local_search.max_passes == 20
+    assert config.optimizer.local_search.primary_metric_min_hits == 3
+    assert config.optimizer.ensemble.enabled is True
+    assert config.optimizer.ensemble.seeds == (42, 7, 99, 123, 256)
+    assert config.optimizer.ensemble.sources == ("greedy", "covering")
+    assert config.optimizer.ensemble.primary_metric_min_hits == 3
+    assert config.tournament is not None
+    assert config.tournament.champion.name == "local_search_candidate.json"
+    assert config.tournament.roster_glob == "data/exports/*_candidate.json"
+
+
+def test_tournament_section_absent_is_allowed(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(_minimal_payload()), encoding="utf-8")
+    config = load_config(config_path)
+    assert config.tournament is None
 
 
 def test_invalid_covering_pair_weight_fails(tmp_path: Path) -> None:
@@ -92,10 +114,78 @@ def test_invalid_covering_pair_weight_fails(tmp_path: Path) -> None:
             "candidate_pool_size": 10,
             "greedy": {"enabled": True},
             "covering": {"enabled": True, "pair_weight": "bogus"},
+            "local_search": {"enabled": True, "max_passes": 5},
         }
     )
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     with pytest.raises(ConfigError, match="pair_weight"):
+        load_config(config_path)
+
+
+def test_invalid_local_search_max_passes_fails(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_payload(
+        optimizer={
+            "seed": 1,
+            "candidate_pool_size": 10,
+            "greedy": {"enabled": True},
+            "covering": {"enabled": True, "pair_weight": "train_frequency"},
+            "local_search": {"enabled": True, "max_passes": 0},
+        }
+    )
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ConfigError, match="max_passes"):
+        load_config(config_path)
+
+
+def test_ensemble_defaults_when_section_omitted(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_payload(
+        optimizer={
+            "seed": 1,
+            "candidate_pool_size": 10,
+            "greedy": {"enabled": True},
+            "covering": {"enabled": True, "pair_weight": "train_frequency"},
+            "local_search": {"enabled": True, "max_passes": 5},
+        }
+    )
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    config = load_config(config_path)
+    assert config.optimizer is not None
+    assert config.optimizer.ensemble.enabled is True
+    assert config.optimizer.ensemble.seeds == (42, 7, 99, 123, 256)
+    assert config.optimizer.ensemble.sources == ("greedy", "covering")
+
+
+def test_invalid_ensemble_empty_seeds_fails(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_payload(
+        optimizer={
+            "seed": 1,
+            "candidate_pool_size": 10,
+            "ensemble": {"enabled": True, "seeds": [], "sources": ["greedy"]},
+        }
+    )
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ConfigError, match="seeds"):
+        load_config(config_path)
+
+
+def test_invalid_ensemble_unknown_source_fails(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_payload(
+        optimizer={
+            "seed": 1,
+            "candidate_pool_size": 10,
+            "ensemble": {
+                "enabled": True,
+                "seeds": [1],
+                "sources": ["local_search"],
+            },
+        }
+    )
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ConfigError, match="sources"):
         load_config(config_path)
 
 
@@ -142,4 +232,15 @@ def test_n_folds_must_be_at_least_two(tmp_path: Path) -> None:
     )
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     with pytest.raises(ConfigError, match="n_folds"):
+        load_config(config_path)
+
+
+def test_invalid_bootstrap_n_resamples_fails(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_payload()
+    policy = _freeze_policy()
+    policy["bootstrap"]["n_resamples"] = 0
+    payload["evaluation"]["freeze_policy"] = policy
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ConfigError, match="n_resamples"):
         load_config(config_path)

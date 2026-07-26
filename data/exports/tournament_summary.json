@@ -1,0 +1,47 @@
+{
+  "tournament_id": "20260726T044025Z",
+  "initial_champion_path": "/Users/mramosalarcon/projects/atlas/data/exports/local_search_candidate.json",
+  "initial_champion_name": "local-search",
+  "final_champion_path": "/Users/mramosalarcon/projects/atlas/data/exports/local_search_candidate.json",
+  "final_champion_name": "local-search",
+  "challenger_paths": [
+    "/Users/mramosalarcon/projects/atlas/data/exports/covering_candidate.json",
+    "/Users/mramosalarcon/projects/atlas/data/exports/greedy_candidate.json",
+    "/Users/mramosalarcon/projects/atlas/data/exports/mikelito-v1.json"
+  ],
+  "duels": [
+    {
+      "challenger_path": "/Users/mramosalarcon/projects/atlas/data/exports/covering_candidate.json",
+      "challenger_name": "covering",
+      "baseline_name": "local-search",
+      "decision": "rejected",
+      "fold_passes": 1,
+      "required_fold_passes": 4,
+      "holdout_delta": 2,
+      "experiment_id": 115,
+      "promoted": false
+    },
+    {
+      "challenger_path": "/Users/mramosalarcon/projects/atlas/data/exports/greedy_candidate.json",
+      "challenger_name": "greedy",
+      "baseline_name": "local-search",
+      "decision": "rejected",
+      "fold_passes": 1,
+      "required_fold_passes": 4,
+      "holdout_delta": 6,
+      "experiment_id": 116,
+      "promoted": false
+    },
+    {
+      "challenger_path": "/Users/mramosalarcon/projects/atlas/data/exports/mikelito-v1.json",
+      "challenger_name": "mikelito-v1",
+      "baseline_name": "local-search",
+      "decision": "rejected",
+      "fold_passes": 1,
+      "required_fold_passes": 4,
+      "holdout_delta": 11,
+      "experiment_id": 117,
+      "promoted": false
+    }
+  ]
+}
