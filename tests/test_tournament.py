@@ -44,18 +44,22 @@ def test_resolve_roster_excludes_champion_and_samples(tmp_path: Path) -> None:
     a = tmp_path / "a_candidate.json"
     b = tmp_path / "b_candidate.json"
     sample = tmp_path / "sample_candidate.json"
+    summary = tmp_path / "tournament_summary.json"
+    ticket_stub = '{"tickets": [[1, 2, 3, 4, 5, 6]]}'
     for path in (champ, a, b, sample):
-        path.write_text("{}", encoding="utf-8")
+        path.write_text(ticket_stub, encoding="utf-8")
+    summary.write_text('{"tournament_id": "x", "duels": []}', encoding="utf-8")
 
     roster = resolve_roster(
         champion=champ,
         explicit=[a],
-        roster_glob=str(tmp_path / "*_candidate.json"),
+        roster_glob=str(tmp_path / "*.json"),
     )
     assert a.resolve() in roster
     assert b.resolve() in roster
     assert champ.resolve() not in roster
     assert sample.resolve() not in roster
+    assert summary.resolve() not in roster
     assert roster == sorted(roster)
 
 

@@ -8,7 +8,12 @@ import pytest
 
 from atlas.domain.exceptions import ImportValidationError, InvalidDrawError, InvalidLotteryNumberError
 from atlas.domain.lottery_rules import LotteryRules
-from atlas.infrastructure.draw_repository import import_history, load_draws, parse_melate_csv
+from atlas.infrastructure.draw_repository import (
+    import_history,
+    load_draws,
+    load_draws_for_evaluation,
+    parse_melate_csv,
+)
 
 
 @pytest.fixture
@@ -86,3 +91,67 @@ def test_gap_in_sequence_fails(tmp_path: Path, rules: LotteryRules) -> None:
     )
     with pytest.raises(ImportValidationError, match="Missing contest id: 2"):
         parse_melate_csv(csv_path, rules)
+
+
+def test_min_contest_filters_load_without_mutating_db(
+    tmp_path: Path, rules: LotteryRules
+) -> None:
+    csv_path = tmp_path / "history.csv"
+    db_path = tmp_path / "raw.sqlite3"
+    rows = [
+        f"40,{c},{c},{c + 1},{c + 2},{c + 3},{c + 4},{c + 5},{c + 6},0,01/01/2020"
+        for c in range(1, 11)
+    ]
+    _write_csv(csv_path, rows)
+    assert import_history(csv_path, db_path, rules) == 10
+
+    full = load_draws(db_path, rules)
+    assert [d.contest for d in full] == list(range(1, 11))
+
+    filtered = load_draws(db_path, rules, min_contest=6)
+    assert [d.contest for d in filtered] == list(range(6, 11))
+    assert [d.contest for d in load_draws(db_path, rules)] == list(range(1, 11))
+
+
+def test_load_draws_for_evaluation_rejects_empty_window(
+    tmp_path: Path, rules: LotteryRules
+) -> None:
+    csv_path = tmp_path / "history.csv"
+    db_path = tmp_path / "raw.sqlite3"
+    _write_csv(
+        csv_path,
+        [
+            "40,1,1,2,3,4,5,6,7,0,01/01/2020",
+            "40,2,8,9,10,11,12,13,14,0,02/01/2020",
+        ],
+    )
+    import_history(csv_path, db_path, rules)
+    with pytest.raises(ImportValidationError, match="min_contest=99"):
+        load_draws_for_evaluation(
+            db_path,
+            rules,
+            min_contest=99,
+            validation_ratio=0.15,
+            n_folds=2,
+        )
+
+
+def test_load_draws_for_evaluation_rejects_too_few_for_folds(
+    tmp_path: Path, rules: LotteryRules
+) -> None:
+    csv_path = tmp_path / "history.csv"
+    db_path = tmp_path / "raw.sqlite3"
+    rows = [
+        f"40,{c},{c},{c + 1},{c + 2},{c + 3},{c + 4},{c + 5},{c + 6},0,01/01/2020"
+        for c in range(1, 6)
+    ]
+    _write_csv(csv_path, rows)
+    import_history(csv_path, db_path, rules)
+    with pytest.raises(ImportValidationError, match="n_folds=5"):
+        load_draws_for_evaluation(
+            db_path,
+            rules,
+            min_contest=3,
+            validation_ratio=0.15,
+            n_folds=5,
+        )

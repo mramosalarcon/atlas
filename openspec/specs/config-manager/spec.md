@@ -94,6 +94,24 @@ The system SHALL fail with a clear error if local-search optimize is invoked whi
 - **WHEN** config sets `max_passes` less than 1
 - **THEN** configuration load or optimize setup raises an error naming the invalid value
 
+### Requirement: Covering cover orders and order weights are loaded from config
+The system SHALL load covering `cover_orders` and per-order relative weights from YAML config and expose them to the covering optimizer, and MUST NOT hardcode those values inside the covering strategy.
+
+#### Scenario: Default cover orders and weights present
+- **WHEN** `config/config.yaml` defines `optimizer.covering.cover_orders` and `optimizer.covering.order_weights`
+- **THEN** the loaded config exposes those values to the covering optimizer
+
+### Requirement: Invalid covering multi-order settings fail clearly
+The system SHALL fail configuration load with a clear error if `cover_orders` is empty, contains a value outside `{2, 3, 4}`, omits `2`, or if `order_weights` is missing a required order or has a non-positive weight.
+
+#### Scenario: Cover orders omit pairs
+- **WHEN** config sets `cover_orders` without `2`
+- **THEN** configuration load raises an error stating order 2 is required
+
+#### Scenario: Unsupported cover order
+- **WHEN** config lists a cover order other than 2, 3, or 4
+- **THEN** configuration load raises an error naming the invalid order
+
 ### Requirement: Ensemble optimizer settings are loaded from config
 The system SHALL load ensemble optimizer settings from YAML config, including an enabled flag, a list of seeds, and a list of source strategy names, and MUST NOT hardcode those values inside the ensemble strategy.
 
@@ -154,3 +172,82 @@ The system SHALL fail with a clear error if freeze-policy settings are inconsist
 #### Scenario: required passes exceed folds
 - **WHEN** config sets `required_fold_passes` greater than `n_folds`
 - **THEN** configuration load or comparison setup raises an error naming the inconsistency
+
+### Requirement: Scoring settings are loaded from config
+The system SHALL load Atlas Score weights, Elo settings (initial rating, K-factor, ratings store path), and ACI settings (n_resamples, ci_level, seed) from YAML config and MUST NOT hardcode those values inside scoring implementations.
+
+#### Scenario: Default scoring section present
+- **WHEN** `config/config.yaml` defines a `scoring` section with weights, elo, and aci subsections
+- **THEN** the loaded config exposes those values to scoring, rating, and ACI components
+
+### Requirement: Invalid scoring settings fail clearly
+The system SHALL fail configuration load with a clear error if Elo `k_factor` is not positive, if ACI `n_resamples` is less than 1, or if `ci_level` is not in `(0, 1)`.
+
+#### Scenario: Invalid ACI n_resamples
+- **WHEN** config sets `scoring.aci.n_resamples` less than 1
+- **THEN** configuration load raises an error naming `n_resamples`
+
+#### Scenario: Invalid Elo k_factor
+- **WHEN** config sets `scoring.elo.k_factor` less than or equal to 0
+- **THEN** configuration load raises an error naming `k_factor`
+
+### Requirement: Optional minimum contest floor is loaded from config
+The system SHALL load an optional `evaluation.min_contest` integer from YAML config and expose it to evaluation draw loading, and MUST NOT hardcode a Melate contest floor inside domain logic.
+
+#### Scenario: Default Melate config sets min_contest 2088
+- **WHEN** the application loads shipped `config/config.yaml`
+- **THEN** `evaluation.min_contest` is 2088
+
+#### Scenario: Absent min_contest means no floor
+- **WHEN** config omits `evaluation.min_contest` or sets it to null
+- **THEN** evaluation draw loading uses all imported contests
+
+### Requirement: Invalid min_contest fails clearly
+The system SHALL fail configuration load with a clear error if `min_contest` is present and less than 1.
+
+#### Scenario: Non-positive min_contest
+- **WHEN** config sets `evaluation.min_contest` to 0 or a negative value
+- **THEN** configuration load raises an error naming `min_contest`
+
+### Requirement: Fold-robust optimizer settings are loaded from config
+The system SHALL load `optimizer.fold_robust` settings including `enabled`, `max_passes`, and `primary_metric_min_hits` from YAML config and expose them to the fold-robust optimizer.
+
+#### Scenario: Default Melate config enables fold-robust
+- **WHEN** the application loads shipped `config/config.yaml` after this change
+- **THEN** `optimizer.fold_robust.enabled` is true and `max_passes` and `primary_metric_min_hits` are present
+
+### Requirement: Invalid fold-robust settings fail clearly
+The system SHALL fail configuration load with a clear error if `fold_robust.max_passes` is less than 1.
+
+#### Scenario: Non-positive max_passes
+- **WHEN** config sets `optimizer.fold_robust.max_passes` to 0 or a negative value
+- **THEN** configuration load raises an error naming `max_passes`
+
+### Requirement: Fold-robust seed_from path is loaded from config
+The system SHALL load an optional `optimizer.fold_robust.seed_from` path from YAML config (null or omitted means covering seed) and expose it to the fold-robust optimizer.
+
+#### Scenario: Default Melate config seeds from champion export
+- **WHEN** the application loads shipped `config/config.yaml` after this change
+- **THEN** `optimizer.fold_robust.seed_from` resolves to the local-search champion export path used as the tournament champion
+
+#### Scenario: Null seed_from means covering
+- **WHEN** config sets `optimizer.fold_robust.seed_from` to null or omits it
+- **THEN** fold-robust uses covering seed unless the CLI overrides the path
+
+### Requirement: Fold-robust objective mode is loaded from config
+The system SHALL load `optimizer.fold_robust.objective` as `absolute` or `relative` (default `absolute` when omitted) and an optional `optimizer.fold_robust.relative_to` path (null/omit means fall back to seed_from then tournament.champion at optimize time).
+
+#### Scenario: Default objective is absolute
+- **WHEN** the application loads config that omits `optimizer.fold_robust.objective`
+- **THEN** fold-robust objective resolves to `absolute`
+
+#### Scenario: Relative mode and relative_to are exposed
+- **WHEN** config sets `optimizer.fold_robust.objective` to `relative` and optionally `relative_to` to a path
+- **THEN** those settings are available to the fold-robust optimizer
+
+### Requirement: Invalid fold-robust objective fails clearly
+The system SHALL fail configuration load with a clear error if `optimizer.fold_robust.objective` is not `absolute` or `relative`.
+
+#### Scenario: Unknown objective value
+- **WHEN** config sets `optimizer.fold_robust.objective` to a value other than `absolute` or `relative`
+- **THEN** configuration load raises an error naming `objective`

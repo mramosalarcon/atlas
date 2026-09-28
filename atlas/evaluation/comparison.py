@@ -95,6 +95,7 @@ def compare_systems(
         bootstrap_min_ci_lower=policy.bootstrap.min_ci_lower,
         version=policy.version,
         decision=decision,
+        min_contest=config.evaluation.min_contest,
     )
 
     experiment = store.append(
@@ -113,6 +114,7 @@ def compare_systems(
             "min_absolute_delta": threshold,
             "config_path": str(config.source_path),
             "policy_evidence": evidence,
+            "min_contest": config.evaluation.min_contest,
         }
     )
 
@@ -143,12 +145,14 @@ def _policy_evidence(
     bootstrap_min_ci_lower: float,
     version: str,
     decision: str,
+    min_contest: int | None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "freeze_policy_version": version,
         "fold_passes": fold_passes,
         "required_fold_passes": required_fold_passes,
         "decision": decision,
+        "min_contest": min_contest,
         "folds": [
             {
                 "fold_index": fold.fold_index,

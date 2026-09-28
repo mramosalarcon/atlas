@@ -5,6 +5,7 @@ from __future__ import annotations
 from atlas.config.settings import (
     CoveringOptimizerSettings,
     EnsembleOptimizerSettings,
+    FoldRobustOptimizerSettings,
     GreedyOptimizerSettings,
     LocalSearchOptimizerSettings,
     OptimizerSettings,
@@ -39,6 +40,11 @@ def _settings(max_passes: int = 10, min_hits: int = 3) -> OptimizerSettings:
             enabled=True,
             seeds=(1, 2),
             sources=("greedy", "covering"),
+            primary_metric_min_hits=min_hits,
+        ),
+        fold_robust=FoldRobustOptimizerSettings(
+            enabled=True,
+            max_passes=max_passes,
             primary_metric_min_hits=min_hits,
         ),
     )
@@ -104,7 +110,36 @@ def test_local_search_report_non_predictive() -> None:
         train_contests=(1, 1),
         train_metric=1,
         pairs_covered=1,
+        triples_covered=1,
+        quads_covered=0,
         accepts=0,
     ).lower()
     assert "does not predict" in report
     assert "candidate" in report
+    assert "triples covered" in report
+    assert "quads covered" in report
+
+
+def test_triple_coverage_breaks_pair_tie() -> None:
+    rules = LotteryRules(1, 8, 4, True, 2)
+    draws = [Draw.create(1, [1, 2, 3, 4], rules, additional=5)]
+    # Same pair count potential; hill climb should not worsen higher-order score.
+    low = TicketSystem.create(
+        [
+            Ticket.create([1, 2, 5, 6], rules),
+            Ticket.create([1, 2, 7, 8], rules),
+        ],
+        rules,
+        name="low",
+    )
+    high = TicketSystem.create(
+        [
+            Ticket.create([1, 2, 3, 4], rules),
+            Ticket.create([1, 2, 5, 6], rules),
+        ],
+        rules,
+        name="high",
+    )
+    assert objective_score(high, draws, min_hits=3) > objective_score(
+        low, draws, min_hits=3
+    )

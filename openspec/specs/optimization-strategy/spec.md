@@ -31,3 +31,10 @@ The system SHALL allow an optimization strategy to invoke other strategies multi
 #### Scenario: Multi-seed composition stays on provided draws
 - **WHEN** an ensemble strategy runs source strategies across multiple seeds during optimize
 - **THEN** every source invocation uses only the draw set passed into the outer optimize call
+
+### Requirement: Fold-robust is a registered optimization strategy
+The system SHALL expose fold-robust optimization through the common optimization strategy interface used by other Melate system optimizers.
+
+#### Scenario: Strategy returns a valid system from train draws
+- **WHEN** the fold-robust strategy optimize method completes successfully on a train draw set
+- **THEN** the result contains exactly `system_size` valid tickets and search used only that draw set

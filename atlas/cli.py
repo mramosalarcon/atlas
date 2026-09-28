@@ -17,29 +17,52 @@ from atlas.analytics import (
     format_pairs_report,
     top_pairs,
 )
-from atlas.config import ConfigError, load_config, require_analytics, require_optimizer
+from atlas.config import ConfigError, load_config, require_analytics, require_optimizer, require_scoring
 from atlas.domain.lottery_rules import LotteryRules
 from atlas.domain.ticket import Ticket
 from atlas.domain.ticket_system import TicketSystem
 from atlas.evaluation.comparison import compare_systems
 from atlas.evaluation.evaluator import evaluate_system, format_evaluation_report
 from atlas.evaluation.split import split_train_validation
-from atlas.infrastructure.draw_repository import import_history, load_draws
+from atlas.infrastructure.draw_repository import (
+    ImportValidationError,
+    import_history,
+    load_draws,
+    load_draws_for_evaluation,
+)
 from atlas.infrastructure.experiment_store import ExperimentStore
 from atlas.optimization import (
     CoveringOptimizer,
     EnsembleOptimizer,
     EnsemblePoolError,
+    FoldRobustOptimizer,
     GreedyOptimizer,
     LocalSearchOptimizer,
     covered_pair_count,
     format_covering_report,
     format_ensemble_report,
+    format_fold_robust_report,
     format_local_search_report,
     format_optimize_report,
 )
+from atlas.optimization.covering import covered_quad_count, covered_triple_count
 from atlas.optimization.ensemble import draft_from_pool, pool_tickets_from_files
+from atlas.optimization.fold_robust import (
+    FoldRobustBaselineError,
+    FoldRobustSeedError,
+    load_fold_robust_baseline,
+    resolve_relative_baseline_path,
+)
 from atlas.optimization.local_search import pair_coverage_count, primary_metric_count
+from atlas.scoring import (
+    RatingsStore,
+    compute_aci,
+    compute_atlas_score,
+    compute_pairwise_aci,
+    format_aci_report,
+    format_ratings_report,
+    format_score_report,
+)
 from atlas.tournament import (
     format_tournament_report,
     resolve_roster,
@@ -77,6 +100,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare.add_argument("baseline_file", type=Path)
     compare.add_argument("candidate_file", type=Path)
+    compare.add_argument(
+        "--with-score",
+        action="store_true",
+        help="Attach Atlas Score / ACI diagnostics on the holdout window (does not change decision)",
+    )
+    compare.add_argument(
+        "--update-ratings",
+        action="store_true",
+        help="Update Elo ratings from the freeze-policy decision",
+    )
 
     sub.add_parser("list-experiments", help="List recorded strategy comparison experiments")
 
@@ -153,6 +186,55 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional baseline system JSON to compare against on validation",
     )
 
+    fold_robust = sub.add_parser(
+        "optimize-fold-robust",
+        help=(
+            "Polish a covering- or file-seeded system via fold-robust train-only "
+            "local search (does not auto-accept; optional --compare-baseline uses "
+            "freeze policy)"
+        ),
+    )
+    fold_robust.add_argument(
+        "--output",
+        type=Path,
+        default=Path("data/exports/fold_robust_candidate.json"),
+        help="Export path for the candidate system JSON",
+    )
+    fold_robust.add_argument(
+        "--seed-from",
+        type=Path,
+        default=None,
+        help=(
+            "Optional ticket-system JSON to seed hill climb "
+            "(overrides optimizer.fold_robust.seed_from; omit both for covering)"
+        ),
+    )
+    fold_robust.add_argument(
+        "--objective",
+        type=str,
+        choices=("absolute", "relative"),
+        default=None,
+        help=(
+            "Fold-robust objective mode (default: config "
+            "optimizer.fold_robust.objective)"
+        ),
+    )
+    fold_robust.add_argument(
+        "--relative-to",
+        type=Path,
+        default=None,
+        help=(
+            "Baseline ticket-system JSON for relative objective "
+            "(overrides optimizer.fold_robust.relative_to)"
+        ),
+    )
+    fold_robust.add_argument(
+        "--compare-baseline",
+        type=Path,
+        default=None,
+        help="Optional baseline system JSON to compare against on validation",
+    )
+
     ensemble = sub.add_parser(
         "optimize-ensemble",
         help=(
@@ -218,6 +300,61 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to write tournament summary JSON",
     )
+    tournament.add_argument(
+        "--update-ratings",
+        action="store_true",
+        help="Update Elo ratings after each duel from freeze-policy decisions",
+    )
+
+    score_cmd = sub.add_parser(
+        "score-system",
+        help=(
+            "Compute Atlas Score for a system JSON (historical diagnostic only; "
+            "does not promote champions)"
+        ),
+    )
+    score_cmd.add_argument("system_file", type=Path)
+    score_cmd.add_argument(
+        "--window",
+        choices=("holdout", "train", "all"),
+        default="holdout",
+        help="Draw window for scoring (default: holdout)",
+    )
+
+    aci_cmd = sub.add_parser(
+        "score-aci",
+        help=(
+            "Compute Atlas Confidence Interval around Atlas Score "
+            "(historical diagnostic only)"
+        ),
+    )
+    aci_cmd.add_argument("system_file", type=Path)
+    aci_cmd.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="Optional baseline for pairwise score-delta ACI",
+    )
+    aci_cmd.add_argument(
+        "--window",
+        choices=("holdout", "train", "all"),
+        default="holdout",
+        help="Draw window for ACI (default: holdout)",
+    )
+
+    sub.add_parser("show-ratings", help="List persisted Atlas Elo ratings")
+
+    update_ratings = sub.add_parser(
+        "update-ratings",
+        help="Apply an Elo update from a freeze-policy decision for two system identities",
+    )
+    update_ratings.add_argument("baseline_id", type=str, help="Baseline/champion identity")
+    update_ratings.add_argument("challenger_id", type=str, help="Challenger identity")
+    update_ratings.add_argument(
+        "decision",
+        choices=("accepted", "rejected"),
+        help="Freeze-policy decision from the duel",
+    )
     return parser
 
 
@@ -240,19 +377,83 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "evaluate-system":
-        draws = load_draws(config.paths.raw_db, rules)
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         system = _load_system(args.system_file, rules, name=args.system_file.stem)
         result = evaluate_system(system, draws, rules, config.prizes)
         print(format_evaluation_report(result, system.name))
+        if config.evaluation.min_contest is not None:
+            print(
+                f"Contest floor applied: evaluation.min_contest="
+                f"{config.evaluation.min_contest} "
+                f"(contests {draws[0].contest}–{draws[-1].contest})"
+            )
         return 0
 
     if args.command == "compare-systems":
-        draws = load_draws(config.paths.raw_db, rules)
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         baseline = _load_system(args.baseline_file, rules, name=args.baseline_file.stem)
         candidate = _load_system(args.candidate_file, rules, name=args.candidate_file.stem)
         store = ExperimentStore(config.paths.experiments_db)
         comparison = compare_systems(baseline, candidate, draws, config, store)
         _print_comparison(comparison)
+        if args.with_score:
+            try:
+                scoring = require_scoring(config)
+            except ConfigError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            _, holdout = split_train_validation(
+                draws, config.evaluation.validation_ratio
+            )
+            min_hits = config.evaluation.primary_metric_min_hits
+            base_score = compute_atlas_score(
+                baseline, holdout, weights=scoring.weights, min_hits=min_hits
+            )
+            cand_score = compute_atlas_score(
+                candidate, holdout, weights=scoring.weights, min_hits=min_hits
+            )
+            pairwise = compute_pairwise_aci(
+                baseline,
+                candidate,
+                holdout,
+                weights=scoring.weights,
+                min_hits=min_hits,
+                aci=scoring.aci,
+            )
+            print(
+                "Atlas Score / ACI diagnostics (holdout; do not change decision): "
+                f"baseline={base_score.score:.4f} candidate={cand_score.score:.4f} "
+                f"delta_ACI=[{pairwise.ci_lower:.4f}, {pairwise.ci_upper:.4f}]"
+            )
+        if args.update_ratings:
+            try:
+                scoring = require_scoring(config)
+            except ConfigError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            ratings = RatingsStore(
+                scoring.elo.ratings_db,
+                initial_rating=scoring.elo.initial_rating,
+            )
+            update = ratings.apply_duel(
+                baseline_id=baseline.name,
+                challenger_id=candidate.name,
+                decision=comparison.decision,
+                k_factor=scoring.elo.k_factor,
+            )
+            print(
+                f"Elo updated ({update.decision}): "
+                f"{update.baseline_id} {update.baseline_before:.2f}->{update.baseline_after:.2f}, "
+                f"{update.challenger_id} {update.challenger_before:.2f}->{update.challenger_after:.2f}"
+            )
         return 0
 
     if args.command == "list-experiments":
@@ -262,10 +463,15 @@ def main(argv: list[str] | None = None) -> int:
             print("No experiments recorded.")
             return 0
         for experiment in experiments:
+            floor = (
+                f" min_contest={experiment.min_contest}"
+                if experiment.min_contest is not None
+                else ""
+            )
             print(
                 f"#{experiment.id} {experiment.timestamp} "
                 f"{experiment.baseline_name}->{experiment.candidate_name} "
-                f"delta={experiment.delta} decision={experiment.decision}"
+                f"delta={experiment.delta} decision={experiment.decision}{floor}"
             )
         return 0
 
@@ -275,9 +481,25 @@ def main(argv: list[str] | None = None) -> int:
         except ConfigError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
-        draws = load_draws(config.paths.raw_db, rules)
+        try:
+            draws = load_draws(
+                config.paths.raw_db,
+                rules,
+                min_contest=config.evaluation.min_contest,
+            )
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         if not draws:
-            print("error: no draws available; run import-history first", file=sys.stderr)
+            floor_note = (
+                f" (evaluation.min_contest={config.evaluation.min_contest})"
+                if config.evaluation.min_contest is not None
+                else ""
+            )
+            print(
+                f"error: no draws available for analytics{floor_note}",
+                file=sys.stderr,
+            )
             return 1
         profiles = compute_number_profiles(draws, rules, analytics.rolling_windows)
         pairs = compute_coappearance(draws, rules)
@@ -296,6 +518,11 @@ def main(argv: list[str] | None = None) -> int:
             "ATLAS analytics rebuilt — historical diagnostics only; "
             "does not predict the next draw."
         )
+        if config.evaluation.min_contest is not None:
+            print(
+                f"Contest floor applied: evaluation.min_contest="
+                f"{config.evaluation.min_contest}"
+            )
         print(f"Draws: {len(draws)} (contests {draws[0].contest}–{draws[-1].contest})")
         print(f"Analytics DB: {analytics.analytics_db}")
         print(f"Raw DB left unchanged: {config.paths.raw_db}")
@@ -345,9 +572,10 @@ def main(argv: list[str] | None = None) -> int:
         if not optimizer_settings.greedy.enabled:
             print("error: optimizer.greedy.enabled is false", file=sys.stderr)
             return 1
-        draws = load_draws(config.paths.raw_db, rules)
-        if not draws:
-            print("error: no draws available; run import-history first", file=sys.stderr)
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
         train, _validation = split_train_validation(
             draws, config.evaluation.validation_ratio
@@ -390,9 +618,10 @@ def main(argv: list[str] | None = None) -> int:
         if not optimizer_settings.covering.enabled:
             print("error: optimizer.covering.enabled is false", file=sys.stderr)
             return 1
-        draws = load_draws(config.paths.raw_db, rules)
-        if not draws:
-            print("error: no draws available; run import-history first", file=sys.stderr)
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
         train, _validation = split_train_validation(
             draws, config.evaluation.validation_ratio
@@ -411,6 +640,9 @@ def main(argv: list[str] | None = None) -> int:
                 pair_weight=optimizer_settings.covering.pair_weight,
                 train_contests=(train[0].contest, train[-1].contest),
                 pairs_covered=covered_pair_count(system),
+                triples_covered=covered_triple_count(system),
+                quads_covered=covered_quad_count(system),
+                cover_orders=optimizer_settings.covering.cover_orders,
             )
         )
         print(f"Exported candidate: {args.output}")
@@ -436,9 +668,10 @@ def main(argv: list[str] | None = None) -> int:
         if not optimizer_settings.local_search.enabled:
             print("error: optimizer.local_search.enabled is false", file=sys.stderr)
             return 1
-        draws = load_draws(config.paths.raw_db, rules)
-        if not draws:
-            print("error: no draws available; run import-history first", file=sys.stderr)
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
         train, _validation = split_train_validation(
             draws, config.evaluation.validation_ratio
@@ -459,7 +692,109 @@ def main(argv: list[str] | None = None) -> int:
                 train_contests=(train[0].contest, train[-1].contest),
                 train_metric=optimizer.last_train_metric,
                 pairs_covered=optimizer.last_pairs_covered,
+                triples_covered=optimizer.last_triples_covered,
+                quads_covered=optimizer.last_quads_covered,
                 accepts=optimizer.last_accepts,
+            )
+        )
+        print(f"Exported candidate: {args.output}")
+        print(
+            "Accept/reject requires freeze-policy compare "
+            "(pass --compare-baseline or run compare-systems)."
+        )
+        if args.compare_baseline is not None:
+            baseline = _load_system(
+                args.compare_baseline, rules, name=args.compare_baseline.stem
+            )
+            store = ExperimentStore(config.paths.experiments_db)
+            comparison = compare_systems(baseline, system, draws, config, store)
+            _print_comparison(comparison)
+        return 0
+
+    if args.command == "optimize-fold-robust":
+        try:
+            optimizer_settings = require_optimizer(config)
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if not optimizer_settings.fold_robust.enabled:
+            print("error: optimizer.fold_robust.enabled is false", file=sys.stderr)
+            return 1
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        train, _validation = split_train_validation(
+            draws, config.evaluation.validation_ratio
+        )
+        n_folds = config.evaluation.freeze_policy.n_folds
+        seed_from = args.seed_from
+        if seed_from is None:
+            seed_from = optimizer_settings.fold_robust.seed_from
+        objective = args.objective or optimizer_settings.fold_robust.objective
+        relative_baseline = None
+        relative_baseline_path: str | None = None
+        if objective == "relative":
+            try:
+                baseline_path = resolve_relative_baseline_path(
+                    cli_relative_to=args.relative_to,
+                    relative_to=optimizer_settings.fold_robust.relative_to,
+                    seed_from=seed_from,
+                    tournament_champion=(
+                        config.tournament.champion
+                        if config.tournament is not None
+                        else None
+                    ),
+                )
+                relative_baseline = load_fold_robust_baseline(
+                    baseline_path, rules, name=baseline_path.stem
+                )
+                relative_baseline_path = str(baseline_path)
+            except FoldRobustBaselineError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+        optimizer = FoldRobustOptimizer(
+            n_folds=n_folds,
+            seed_from=seed_from,
+            objective=objective,
+            relative_baseline=relative_baseline,
+            min_absolute_delta=config.evaluation.min_absolute_delta,
+            relative_baseline_path=relative_baseline_path,
+        )
+        try:
+            system = optimizer.optimize(
+                train,
+                rules,
+                optimizer_settings,
+                name="fold-robust",
+            )
+        except (FoldRobustSeedError, FoldRobustBaselineError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        _write_system(args.output, system)
+        print(
+            format_fold_robust_report(
+                system,
+                seed=optimizer_settings.seed,
+                max_passes=optimizer_settings.fold_robust.max_passes,
+                n_folds=n_folds,
+                train_contests=(train[0].contest, train[-1].contest),
+                min_fold=optimizer.last_min_fold,
+                sum_fold=optimizer.last_sum_fold,
+                train_metric=optimizer.last_train_metric,
+                fold_primaries=optimizer.last_fold_primaries,
+                pairs_covered=optimizer.last_pairs_covered,
+                triples_covered=optimizer.last_triples_covered,
+                quads_covered=optimizer.last_quads_covered,
+                accepts=optimizer.last_accepts,
+                seed_source=optimizer.last_seed_source,
+                objective=optimizer.last_objective,
+                relative_baseline=optimizer.relative_baseline_path,
+                fold_deltas=optimizer.last_fold_deltas or None,
+                train_fold_passes=optimizer.last_train_fold_passes,
+                sum_deltas=optimizer.last_sum_deltas,
+                min_absolute_delta=config.evaluation.min_absolute_delta,
             )
         )
         print(f"Exported candidate: {args.output}")
@@ -485,9 +820,10 @@ def main(argv: list[str] | None = None) -> int:
         if not optimizer_settings.ensemble.enabled:
             print("error: optimizer.ensemble.enabled is false", file=sys.stderr)
             return 1
-        draws = load_draws(config.paths.raw_db, rules)
-        if not draws:
-            print("error: no draws available; run import-history first", file=sys.stderr)
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
         train, _validation = split_train_validation(
             draws, config.evaluation.validation_ratio
@@ -597,14 +933,20 @@ def main(argv: list[str] | None = None) -> int:
         if not challenger_paths:
             print("error: no challengers resolved after excluding champion", file=sys.stderr)
             return 1
-        draws = load_draws(config.paths.raw_db, rules)
-        if not draws:
-            print("error: no draws available; run import-history first", file=sys.stderr)
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
-        champion = _load_system(champion_path, rules, name=champion_path.stem)
-        challengers = [
-            (path, _load_system(path, rules, name=path.stem)) for path in challenger_paths
-        ]
+        try:
+            champion = _load_system(champion_path, rules, name=champion_path.stem)
+            challengers = [
+                (path, _load_system(path, rules, name=path.stem))
+                for path in challenger_paths
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         store = ExperimentStore(config.paths.experiments_db)
         summary = run_ladder(
             champion=champion,
@@ -615,13 +957,188 @@ def main(argv: list[str] | None = None) -> int:
             store=store,
         )
         print(format_tournament_report(summary))
+        if args.update_ratings:
+            try:
+                scoring = require_scoring(config)
+            except ConfigError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            ratings = RatingsStore(
+                scoring.elo.ratings_db,
+                initial_rating=scoring.elo.initial_rating,
+            )
+            for duel in summary.duels:
+                update = ratings.apply_duel(
+                    baseline_id=duel.baseline_name,
+                    challenger_id=duel.challenger_name,
+                    decision=duel.decision,
+                    k_factor=scoring.elo.k_factor,
+                )
+                print(
+                    f"Elo duel {update.challenger_id} vs {update.baseline_id}: "
+                    f"{update.decision} "
+                    f"({update.challenger_before:.2f}->{update.challenger_after:.2f})"
+                )
         if args.output is not None:
             write_tournament_summary(args.output, summary)
             print(f"Wrote tournament summary: {args.output}")
         return 0
 
+    if args.command == "score-system":
+        try:
+            scoring = require_scoring(config)
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        try:
+            window_draws, contest_range = _select_window(
+                draws, config.evaluation.validation_ratio, args.window
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        system = _load_system(args.system_file, rules, name=args.system_file.stem)
+        result = compute_atlas_score(
+            system,
+            window_draws,
+            weights=scoring.weights,
+            min_hits=config.evaluation.primary_metric_min_hits,
+        )
+        print(
+            format_score_report(
+                result,
+                system_name=system.name,
+                window=args.window,
+                contest_range=contest_range,
+            )
+        )
+        return 0
+
+    if args.command == "score-aci":
+        try:
+            scoring = require_scoring(config)
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        try:
+            draws = _evaluation_draws(config, rules)
+        except ImportValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        try:
+            window_draws, _contest_range = _select_window(
+                draws, config.evaluation.validation_ratio, args.window
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        system = _load_system(args.system_file, rules, name=args.system_file.stem)
+        min_hits = config.evaluation.primary_metric_min_hits
+        if args.baseline is not None:
+            baseline = _load_system(args.baseline, rules, name=args.baseline.stem)
+            result = compute_pairwise_aci(
+                baseline,
+                system,
+                window_draws,
+                weights=scoring.weights,
+                min_hits=min_hits,
+                aci=scoring.aci,
+            )
+            print(
+                format_aci_report(
+                    result,
+                    system_name=system.name,
+                    baseline_name=baseline.name,
+                    window=args.window,
+                )
+            )
+        else:
+            result = compute_aci(
+                system,
+                window_draws,
+                weights=scoring.weights,
+                min_hits=min_hits,
+                aci=scoring.aci,
+            )
+            print(
+                format_aci_report(
+                    result, system_name=system.name, window=args.window
+                )
+            )
+        return 0
+
+    if args.command == "show-ratings":
+        try:
+            scoring = require_scoring(config)
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        ratings = RatingsStore(
+            scoring.elo.ratings_db,
+            initial_rating=scoring.elo.initial_rating,
+        )
+        print(format_ratings_report(ratings.list_ratings()))
+        return 0
+
+    if args.command == "update-ratings":
+        try:
+            scoring = require_scoring(config)
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        ratings = RatingsStore(
+            scoring.elo.ratings_db,
+            initial_rating=scoring.elo.initial_rating,
+        )
+        update = ratings.apply_duel(
+            baseline_id=args.baseline_id,
+            challenger_id=args.challenger_id,
+            decision=args.decision,
+            k_factor=scoring.elo.k_factor,
+        )
+        print(
+            "ATLAS Elo update — historical duel ranking only; "
+            "does not predict the next draw."
+        )
+        print(
+            f"{update.baseline_id}: {update.baseline_before:.2f} -> {update.baseline_after:.2f}"
+        )
+        print(
+            f"{update.challenger_id}: {update.challenger_before:.2f} -> {update.challenger_after:.2f}"
+            f" ({update.decision})"
+        )
+        return 0
+
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def _evaluation_draws(config, rules):
+    return load_draws_for_evaluation(
+        config.paths.raw_db,
+        rules,
+        min_contest=config.evaluation.min_contest,
+        validation_ratio=config.evaluation.validation_ratio,
+        n_folds=config.evaluation.freeze_policy.n_folds,
+    )
+
+
+def _select_window(draws, validation_ratio: float, window: str):
+    train, holdout = split_train_validation(draws, validation_ratio)
+    if window == "all":
+        selected = list(draws)
+    elif window == "train":
+        selected = list(train)
+    else:
+        selected = list(holdout)
+    if not selected:
+        raise ValueError(f"Selected window {window!r} is empty")
+    return selected, (selected[0].contest, selected[-1].contest)
 
 
 def _print_comparison(comparison) -> None:
@@ -666,6 +1183,11 @@ def _print_comparison(comparison) -> None:
 def _load_system(path: Path, rules: LotteryRules, name: str) -> TicketSystem:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, dict):
+        if "tickets" not in payload:
+            raise ValueError(
+                f"{path} is not a ticket-system JSON (missing 'tickets' key); "
+                "exclude summaries/baselines from --roster-glob or --challengers"
+            )
         tickets_raw = payload["tickets"]
         name = str(payload.get("name", name))
     else:

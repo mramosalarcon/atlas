@@ -125,7 +125,12 @@ def save_draws(db_path: Path, draws: Iterable[Draw]) -> int:
         return len(rows)
 
 
-def load_draws(db_path: Path, rules: LotteryRules) -> list[Draw]:
+def load_draws(
+    db_path: Path,
+    rules: LotteryRules,
+    *,
+    min_contest: int | None = None,
+) -> list[Draw]:
     if not db_path.is_file():
         raise ImportValidationError(f"Raw database not found: {db_path}")
 
@@ -152,6 +157,45 @@ def load_draws(db_path: Path, rules: LotteryRules) -> list[Draw]:
                 jackpot=row["jackpot"],
                 require_sorted=True,
             )
+        )
+    if min_contest is not None:
+        draws = [draw for draw in draws if draw.contest >= min_contest]
+    return draws
+
+
+def load_draws_for_evaluation(
+    db_path: Path,
+    rules: LotteryRules,
+    *,
+    min_contest: int | None,
+    validation_ratio: float,
+    n_folds: int,
+) -> list[Draw]:
+    """Load draws for eval/optimize/compare, applying optional contest floor.
+
+    Does not mutate the raw database. Raises ImportValidationError when the
+    filtered window is empty or too small for train/validation and freeze folds.
+    """
+    draws = load_draws(db_path, rules, min_contest=min_contest)
+    floor_note = (
+        f" (evaluation.min_contest={min_contest})" if min_contest is not None else ""
+    )
+    if not draws:
+        raise ImportValidationError(
+            f"No draws available for evaluation{floor_note}"
+        )
+    if len(draws) < n_folds:
+        raise ImportValidationError(
+            f"Filtered history has {len(draws)} draws but freeze_policy.n_folds="
+            f"{n_folds}{floor_note}"
+        )
+    from atlas.evaluation.split import split_train_validation
+
+    train, validation = split_train_validation(draws, validation_ratio)
+    if not train or not validation:
+        raise ImportValidationError(
+            f"Filtered history cannot form a non-empty train/validation split "
+            f"({len(draws)} draws){floor_note}"
         )
     return draws
 

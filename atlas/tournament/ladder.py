@@ -56,6 +56,19 @@ class TournamentSummary:
         }
 
 
+def is_ticket_system_json(path: Path) -> bool:
+    """Return True if path looks like a ticket-system export (has tickets)."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    if isinstance(payload, list):
+        return bool(payload) and all(isinstance(row, list) for row in payload)
+    if isinstance(payload, dict):
+        return isinstance(payload.get("tickets"), list)
+    return False
+
+
 def resolve_roster(
     *,
     champion: Path,
@@ -84,6 +97,8 @@ def resolve_roster(
             if resolved == champion_resolved:
                 continue
             if resolved.name.startswith("sample_"):
+                continue
+            if not is_ticket_system_json(resolved):
                 continue
             if resolved not in seen:
                 seen.add(resolved)

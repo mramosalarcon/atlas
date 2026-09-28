@@ -28,6 +28,7 @@ class ExperimentRecord:
     min_absolute_delta: int
     config_path: str
     policy_evidence: dict[str, Any] | None = None
+    min_contest: int | None = None
 
 
 class ExperimentStore:
@@ -59,7 +60,8 @@ class ExperimentStore:
                     decision TEXT NOT NULL,
                     min_absolute_delta INTEGER NOT NULL,
                     config_path TEXT NOT NULL,
-                    policy_evidence TEXT
+                    policy_evidence TEXT,
+                    min_contest INTEGER
                 )
                 """
             )
@@ -69,11 +71,14 @@ class ExperimentStore:
             }
             if "policy_evidence" not in columns:
                 conn.execute("ALTER TABLE experiments ADD COLUMN policy_evidence TEXT")
+            if "min_contest" not in columns:
+                conn.execute("ALTER TABLE experiments ADD COLUMN min_contest INTEGER")
             conn.commit()
 
     def append(self, payload: dict[str, Any]) -> ExperimentRecord:
         timestamp = datetime.now(timezone.utc).isoformat()
         evidence = payload.get("policy_evidence")
+        min_contest = payload.get("min_contest")
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -83,8 +88,8 @@ class ExperimentStore:
                     validation_start, validation_end,
                     baseline_metric, candidate_metric, delta,
                     outcome, decision, min_absolute_delta, config_path,
-                    policy_evidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    policy_evidence, min_contest
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     timestamp,
@@ -102,6 +107,7 @@ class ExperimentStore:
                     payload["min_absolute_delta"],
                     payload["config_path"],
                     json.dumps(evidence) if evidence is not None else None,
+                    min_contest,
                 ),
             )
             conn.commit()
@@ -124,6 +130,7 @@ class ExperimentStore:
             min_absolute_delta=payload["min_absolute_delta"],
             config_path=payload["config_path"],
             policy_evidence=evidence,
+            min_contest=min_contest,
         )
 
     def list_experiments(self) -> list[ExperimentRecord]:
@@ -135,8 +142,11 @@ class ExperimentStore:
 
         records: list[ExperimentRecord] = []
         for row in rows:
-            evidence_raw = row["policy_evidence"] if "policy_evidence" in row.keys() else None
+            keys = row.keys()
+            evidence_raw = row["policy_evidence"] if "policy_evidence" in keys else None
             evidence = json.loads(evidence_raw) if evidence_raw else None
+            min_contest_raw = row["min_contest"] if "min_contest" in keys else None
+            min_contest = int(min_contest_raw) if min_contest_raw is not None else None
             records.append(
                 ExperimentRecord(
                     id=int(row["id"]),
@@ -155,6 +165,7 @@ class ExperimentStore:
                     min_absolute_delta=int(row["min_absolute_delta"]),
                     config_path=row["config_path"],
                     policy_evidence=evidence,
+                    min_contest=min_contest,
                 )
             )
         return records

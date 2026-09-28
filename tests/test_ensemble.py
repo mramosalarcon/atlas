@@ -10,6 +10,7 @@ import pytest
 from atlas.config.settings import (
     CoveringOptimizerSettings,
     EnsembleOptimizerSettings,
+    FoldRobustOptimizerSettings,
     GreedyOptimizerSettings,
     LocalSearchOptimizerSettings,
     OptimizerSettings,
@@ -49,6 +50,9 @@ def _settings(
             seeds=seeds,
             sources=sources,
             primary_metric_min_hits=3,
+        ),
+        fold_robust=FoldRobustOptimizerSettings(
+            enabled=True, max_passes=5, primary_metric_min_hits=3
         ),
     )
 

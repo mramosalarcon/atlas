@@ -62,3 +62,40 @@ The system SHALL record a freeze-policy version string that reflects when shippe
 #### Scenario: Version stored on compare
 - **WHEN** a comparison completes under the shipped defaults
 - **THEN** the experiment policy evidence includes the same freeze-policy version string
+
+### Requirement: Comparison reports may include Atlas Score and ACI diagnostics
+The system SHALL allow comparison reports to include Atlas Score (and optional ACI) for baseline and candidate on a documented draw window as diagnostics, and MUST NOT change the freeze-policy accept/reject decision based on those diagnostics.
+
+#### Scenario: Diagnostics do not flip decision
+- **WHEN** comparison includes Atlas Score or ACI diagnostics and freeze policy would reject
+- **THEN** the recorded decision remains `rejected` regardless of score ordering
+
+#### Scenario: Diagnostic banner remains non-predictive
+- **WHEN** comparison output includes Atlas Score or ACI lines
+- **THEN** the overall comparison report still states it is not a prediction of future draws
+
+### Requirement: Strategy comparison uses the filtered contest window
+When `evaluation.min_contest` is set, the system SHALL run freeze-policy comparison and holdout diagnostics on draws with contests `>= min_contest` only.
+
+#### Scenario: Holdout diagnostic contests respect floor
+- **WHEN** compare-systems runs with `min_contest=2088` and the filtered window is large enough to split
+- **THEN** reported holdout diagnostic contest ids are all `>= 2088`
+
+#### Scenario: Insufficient filtered draws fail clearly
+- **WHEN** compare-systems runs but the filtered window cannot support the configured freeze folds or validation split
+- **THEN** the command fails with a clear error referring to `min_contest` rather than producing a silent or partial decision
+
+### Requirement: Experiment records persist min_contest
+The system SHALL store the configured `evaluation.min_contest` value with each comparison experiment (`null` when no floor is configured) and SHALL expose that value when experiments are listed or retrieved.
+
+#### Scenario: Floor stored when configured
+- **WHEN** compare-systems completes with `evaluation.min_contest=2088`
+- **THEN** the experiment record stores `min_contest=2088`
+
+#### Scenario: Absent floor stored as null
+- **WHEN** compare-systems completes with no `min_contest` configured
+- **THEN** the experiment record stores a null/absent `min_contest`
+
+#### Scenario: Listed experiments show stored floor
+- **WHEN** list-experiments runs after a comparison that stored `min_contest=2088`
+- **THEN** the listed entry for that experiment includes `2088` as the contest floor

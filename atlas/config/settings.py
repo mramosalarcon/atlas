@@ -46,6 +46,7 @@ class EvaluationSettings:
     min_absolute_delta: int
     primary_metric_min_hits: int
     freeze_policy: FreezePolicySettings
+    min_contest: int | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,11 @@ class GreedyOptimizerSettings:
 class CoveringOptimizerSettings:
     enabled: bool
     pair_weight: str
+    cover_orders: tuple[int, ...] = (2, 3)
+    order_weights: tuple[tuple[int, float], ...] = ((2, 1.0), (3, 1.0), (4, 0.5))
+
+    def order_weight_map(self) -> dict[int, float]:
+        return dict(self.order_weights)
 
 
 @dataclass(frozen=True)
@@ -81,6 +87,16 @@ class EnsembleOptimizerSettings:
 
 
 @dataclass(frozen=True)
+class FoldRobustOptimizerSettings:
+    enabled: bool
+    max_passes: int
+    primary_metric_min_hits: int
+    seed_from: Path | None = None
+    objective: str = "absolute"
+    relative_to: Path | None = None
+
+
+@dataclass(frozen=True)
 class OptimizerSettings:
     seed: int
     candidate_pool_size: int
@@ -88,6 +104,7 @@ class OptimizerSettings:
     covering: CoveringOptimizerSettings
     local_search: LocalSearchOptimizerSettings
     ensemble: EnsembleOptimizerSettings
+    fold_robust: FoldRobustOptimizerSettings
 
 
 @dataclass(frozen=True)
@@ -121,6 +138,35 @@ class TournamentSettings:
 
 
 @dataclass(frozen=True)
+class ScoreWeightSettings:
+    primary: float
+    pairs: float
+    triples: float
+    quads: float
+
+
+@dataclass(frozen=True)
+class EloSettings:
+    initial_rating: float
+    k_factor: float
+    ratings_db: Path
+
+
+@dataclass(frozen=True)
+class AciSettings:
+    n_resamples: int
+    ci_level: float
+    seed: int
+
+
+@dataclass(frozen=True)
+class ScoringSettings:
+    weights: ScoreWeightSettings
+    elo: EloSettings
+    aci: AciSettings
+
+
+@dataclass(frozen=True)
 class AppConfig:
     paths: PathSettings
     lottery: LotterySettings
@@ -130,3 +176,4 @@ class AppConfig:
     analytics: AnalyticsSettings | None = None
     optimizer: OptimizerSettings | None = None
     tournament: TournamentSettings | None = None
+    scoring: ScoringSettings | None = None

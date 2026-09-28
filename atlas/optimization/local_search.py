@@ -10,7 +10,7 @@ from atlas.domain.lottery_rules import LotteryRules
 from atlas.domain.ticket import Ticket
 from atlas.domain.ticket_system import TicketSystem
 from atlas.optimization.covering import CoveringOptimizer
-from atlas.optimization.pairs import coverage_union, pairs_in_numbers
+from atlas.optimization.pairs import coverage_union, tuples_in_numbers
 from atlas.optimization.strategy import OptimizationStrategy
 
 
@@ -19,6 +19,8 @@ class LocalSearchOptimizer(OptimizationStrategy):
         self.last_accepts = 0
         self.last_train_metric = 0
         self.last_pairs_covered = 0
+        self.last_triples_covered = 0
+        self.last_quads_covered = 0
 
     def optimize(
         self,
@@ -48,6 +50,8 @@ class LocalSearchOptimizer(OptimizationStrategy):
             result, draws, min_hits=settings.local_search.primary_metric_min_hits
         )
         self.last_pairs_covered = pair_coverage_count(result)
+        self.last_triples_covered = triple_coverage_count(result)
+        self.last_quads_covered = quad_coverage_count(result)
         return result
 
 
@@ -75,15 +79,29 @@ def pair_coverage_count(system: TicketSystem) -> int:
     return len(coverage_union(system.tickets))
 
 
+def triple_coverage_count(system: TicketSystem) -> int:
+    return len(
+        set().union(*(tuples_in_numbers(t.numbers, 3) for t in system.tickets))
+    )
+
+
+def quad_coverage_count(system: TicketSystem) -> int:
+    return len(
+        set().union(*(tuples_in_numbers(t.numbers, 4) for t in system.tickets))
+    )
+
+
 def objective_score(
     system: TicketSystem,
     draws: Sequence[Draw],
     *,
     min_hits: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, int, int]:
     return (
         primary_metric_count(system, draws, min_hits=min_hits),
         pair_coverage_count(system),
+        triple_coverage_count(system),
+        quad_coverage_count(system),
     )
 
 
@@ -124,6 +142,15 @@ def iter_moves(system: TicketSystem, rules: LotteryRules):
                 yield ticket_index, remove, add
 
 
+def _coverage_counts(
+    ticket_numbers: Sequence[tuple[int, ...]],
+) -> tuple[int, int, int]:
+    pairs = set().union(*(tuples_in_numbers(nums, 2) for nums in ticket_numbers))
+    triples = set().union(*(tuples_in_numbers(nums, 3) for nums in ticket_numbers))
+    quads = set().union(*(tuples_in_numbers(nums, 4) for nums in ticket_numbers))
+    return len(pairs), len(triples), len(quads)
+
+
 def hill_climb(
     seed: TicketSystem,
     draws: Sequence[Draw],
@@ -134,13 +161,14 @@ def hill_climb(
 ) -> tuple[TicketSystem, int]:
     draw_sets = [frozenset(draw.mains) for draw in draws]
     ticket_sets = [frozenset(t.numbers) for t in seed.tickets]
-    # hits[draw_idx][ticket_idx]
     hits = [
         [len(ticket_set & draw_set) for ticket_set in ticket_sets]
         for draw_set in draw_sets
     ]
     best_primary = sum(1 for row in hits if max(row) >= min_hits)
-    best_pairs = len(coverage_union(seed.tickets))
+    best_pairs, best_triples, best_quads = _coverage_counts(
+        [t.numbers for t in seed.tickets]
+    )
     current_numbers = [t.numbers for t in seed.tickets]
     accepts = 0
 
@@ -177,22 +205,22 @@ def hill_climb(
 
                     if new_primary < best_primary:
                         continue
-                    # Pair coverage only when primary does not worsen (and for ties).
                     trial_tickets = list(current_numbers)
                     trial_tickets[ticket_index] = replacement
-                    new_pairs = len(
-                        set().union(*(pairs_in_numbers(nums) for nums in trial_tickets))
-                    )
-                    if (new_primary, new_pairs) <= (best_primary, best_pairs):
+                    new_pairs, new_triples, new_quads = _coverage_counts(trial_tickets)
+                    new_score = (new_primary, new_pairs, new_triples, new_quads)
+                    best_score = (best_primary, best_pairs, best_triples, best_quads)
+                    if new_score <= best_score:
                         continue
 
-                    # Accept move.
                     current_numbers = trial_tickets
                     ticket_sets[ticket_index] = new_set
                     for draw_idx, draw_set in enumerate(draw_sets):
                         hits[draw_idx][ticket_index] = len(new_set & draw_set)
                     best_primary = new_primary
                     best_pairs = new_pairs
+                    best_triples = new_triples
+                    best_quads = new_quads
                     accepts += 1
                     improved = True
                     break
@@ -216,6 +244,8 @@ def format_local_search_report(
     train_metric: int,
     pairs_covered: int,
     accepts: int,
+    triples_covered: int = 0,
+    quads_covered: int = 0,
 ) -> str:
     contest_line = (
         f"Train contests used for search: {train_contests[0]}–{train_contests[1]}\n"
@@ -236,5 +266,7 @@ def format_local_search_report(
         f"{contest_line}"
         f"Train primary-metric count: {train_metric}\n"
         f"Unordered pairs covered: {pairs_covered}\n"
+        f"Unordered triples covered: {triples_covered}\n"
+        f"Unordered quads covered: {quads_covered}\n"
         f"Tickets:\n{tickets}\n"
     )

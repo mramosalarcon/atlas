@@ -5,6 +5,7 @@ from atlas.config.loader import (
     load_config,
     require_analytics,
     require_optimizer,
+    require_scoring,
 )
 from atlas.config.settings import AppConfig
 
@@ -14,4 +15,5 @@ __all__ = [
     "load_config",
     "require_analytics",
     "require_optimizer",
+    "require_scoring",
 ]

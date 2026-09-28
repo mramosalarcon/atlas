@@ -50,6 +50,7 @@ def _config(
     tmp_path: Path,
     min_absolute_delta: int = 1,
     freeze: FreezePolicySettings | None = None,
+    min_contest: int | None = None,
 ) -> AppConfig:
     return AppConfig(
         paths=PathSettings(
@@ -63,6 +64,7 @@ def _config(
             min_absolute_delta,
             3,
             freeze or _freeze(),
+            min_contest=min_contest,
         ),
         prizes=PrizeSettings(True, 20.0, 30.0, 200.0, 5000.0, 50000.0, 1_000_000.0),
         source_path=tmp_path / "config.yaml",
@@ -193,3 +195,35 @@ def test_bootstrap_gate_can_reject(tmp_path: Path) -> None:
     evidence = store.list_experiments()[0].policy_evidence
     assert evidence is not None
     assert evidence["bootstrap"]["passed"] is False
+
+
+def test_experiment_stores_min_contest_when_configured(tmp_path: Path) -> None:
+    config = _config(tmp_path, min_contest=2088)
+    store = ExperimentStore(config.paths.experiments_db)
+    compare_systems(
+        _system("baseline", BASELINE_TICKETS),
+        _system("candidate", CANDIDATE_TICKETS),
+        _draws(),
+        config,
+        store,
+    )
+    record = store.list_experiments()[0]
+    assert record.min_contest == 2088
+    assert record.policy_evidence is not None
+    assert record.policy_evidence["min_contest"] == 2088
+
+
+def test_experiment_stores_null_min_contest_when_omitted(tmp_path: Path) -> None:
+    config = _config(tmp_path, min_contest=None)
+    store = ExperimentStore(config.paths.experiments_db)
+    compare_systems(
+        _system("baseline", BASELINE_TICKETS),
+        _system("candidate", CANDIDATE_TICKETS),
+        _draws(),
+        config,
+        store,
+    )
+    record = store.list_experiments()[0]
+    assert record.min_contest is None
+    assert record.policy_evidence is not None
+    assert record.policy_evidence["min_contest"] is None

@@ -5,6 +5,7 @@ from __future__ import annotations
 from atlas.config.settings import (
     CoveringOptimizerSettings,
     EnsembleOptimizerSettings,
+    FoldRobustOptimizerSettings,
     GreedyOptimizerSettings,
     LocalSearchOptimizerSettings,
     OptimizerSettings,
@@ -36,6 +37,9 @@ def _settings(seed: int = 1, pool: int = 40) -> OptimizerSettings:
             seeds=(1, 2),
             sources=("greedy", "covering"),
             primary_metric_min_hits=3,
+        ),
+        fold_robust=FoldRobustOptimizerSettings(
+            enabled=True, max_passes=5, primary_metric_min_hits=3
         ),
     )
 

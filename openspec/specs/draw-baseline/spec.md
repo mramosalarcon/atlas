@@ -21,3 +21,10 @@ The system SHALL present draw baselines as historical reference descriptors and 
 #### Scenario: Report language
 - **WHEN** a baseline report is generated
 - **THEN** it describes historical draw shape under game rules and does not claim knowledge of the next draw
+
+### Requirement: Draw baseline honors the evaluation contest floor
+When `evaluation.min_contest` is set, the system SHALL compute draw-shape baseline diagnostics only from draws with contests `>= min_contest`.
+
+#### Scenario: Baseline reflects filtered history
+- **WHEN** build-analytics runs with `min_contest=2088`
+- **THEN** baseline descriptors are computed only from contests `>= 2088`

@@ -22,8 +22,8 @@ The system SHALL only accept moves that replace exactly one main number on one t
 - **WHEN** a candidate move would make two tickets share the same sorted number set
 - **THEN** that move is skipped
 
-### Requirement: Train objective prefers primary metric then pair coverage
-The system SHALL score candidate systems on the provided draw set using the count of draws whose best ticket has at least the configured primary-metric minimum hits, and SHALL use unordered pair coverage as a tie-break when that count is equal. The strategy MUST NOT read draws outside the provided set.
+### Requirement: Train objective prefers primary metric then coverage tie-breaks
+The system SHALL score candidate systems on the provided draw set using the count of draws whose best ticket has at least the configured primary-metric minimum hits, and SHALL break ties lexicographically by unordered pair coverage, then triple coverage, then quad coverage. The strategy MUST NOT read draws outside the provided set.
 
 #### Scenario: Improving primary metric is accepted
 - **WHEN** a legal move increases the train primary-metric count
@@ -33,12 +33,27 @@ The system SHALL score candidate systems on the provided draw set using the coun
 - **WHEN** a legal move leaves the train primary-metric count unchanged but increases system unordered pair coverage
 - **THEN** the move is accepted
 
+#### Scenario: Triple coverage breaks a pair tie
+- **WHEN** two neighboring systems have equal primary-metric count and equal pair coverage, and one has strictly greater triple coverage
+- **THEN** local search prefers the system with greater triple coverage
+
+#### Scenario: Quad coverage breaks a triple tie
+- **WHEN** two neighboring systems tie on primary metric, pairs, and triples, and one has strictly greater quad coverage
+- **THEN** local search prefers the system with greater quad coverage
+
 ### Requirement: Local search is deterministic
 The system SHALL produce identical ticket systems given identical draws, rules, seed, covering settings, and local-search settings.
 
 #### Scenario: Same inputs reproduce the system
 - **WHEN** local-search optimize is run twice with the same inputs and settings
 - **THEN** both runs return identical ordered ticket number lists
+
+### Requirement: Local-search report includes higher-order coverage
+The system SHALL include triple and quad coverage counts in the local-search optimize report while remaining a non-predictive comparison candidate.
+
+#### Scenario: Report lists triple and quad coverage
+- **WHEN** a local-search optimize report is produced
+- **THEN** it includes unordered triple and quad coverage counts and states the system does not predict the next draw
 
 ### Requirement: Local-search output is a comparison candidate only
 The system SHALL present local-search systems as historical search candidates for freeze-policy comparison and MUST NOT claim they predict future draws or auto-accept them.
